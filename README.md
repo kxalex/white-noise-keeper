@@ -4,15 +4,10 @@ Long-running Raspberry Pi service that keeps a Google Nest playing white noise d
 
 ## Install On Raspberry Pi
 
-Recommended deployment is the single install/update script:
+Run this on the Raspberry Pi:
 
 ```sh
-sudo mkdir -p /opt/src
-sudo chown "$USER":"$USER" /opt/src
-cd /opt/src
-git clone https://github.com/kxalex/white-noise-keeper.git
-cd white-noise-keeper
-./scripts/install-or-update-on-pi.sh
+START_SERVICE=0 sh -c "$(curl -fsSL https://raw.githubusercontent.com/kxalex/white-noise-keeper/master/scripts/install-or-update-on-pi.sh)"
 ```
 
 The installer:
@@ -25,13 +20,13 @@ The installer:
 - Installs and enables the systemd service.
 - Installs `/usr/local/bin/update-white-noise-keeper`.
 
-Edit `/etc/white-noise-keeper/config.toml` if the Nest name, stream URL, or known host differs. Leave `ipad_backup.enabled = false` until Pushcut is ready.
-
-To install without starting the service yet:
+Edit `/etc/white-noise-keeper/config.toml` and set the real Nest name, stream URL, and known host if needed. Then start the service:
 
 ```sh
-START_SERVICE=0 ./scripts/install-or-update-on-pi.sh
+sudo systemctl start white-noise-keeper
 ```
+
+Leave `ipad_backup.enabled = false` until Pushcut is ready.
 
 ## Updating On Raspberry Pi
 
@@ -53,12 +48,6 @@ To skip tests during an urgent update:
 
 ```sh
 RUN_TESTS=0 update-white-noise-keeper
-```
-
-For first install without a manual clone:
-
-```sh
-REPO_URL=https://github.com/kxalex/white-noise-keeper.git sh -c "$(curl -fsSL https://raw.githubusercontent.com/kxalex/white-noise-keeper/master/scripts/install-or-update-on-pi.sh)"
 ```
 
 ## Commands

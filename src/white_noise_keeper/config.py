@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import MISSING, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -12,13 +12,10 @@ except ModuleNotFoundError:  # pragma: no cover - for developer machines below 3
     import tomli as tomllib  # type: ignore[no-redef]
 
 
-DEFAULT_STREAM_URL = "http://192.0.2.42:9000/example-white-noise.mp4"
-
-
 @dataclass(frozen=True)
 class CastConfig:
-    name: str = "Demo Room Cast A7K4"
-    url: str = DEFAULT_STREAM_URL
+    name: str
+    url: str
     content_type: str = "video/mp4"
     discovery_timeout_seconds: float = 30.0
     known_hosts: tuple[str, ...] = ()
@@ -63,7 +60,7 @@ class IpadBackupConfig:
 
 @dataclass(frozen=True)
 class AppConfig:
-    cast: CastConfig = field(default_factory=CastConfig)
+    cast: CastConfig
     schedule: ScheduleConfig = field(default_factory=ScheduleConfig)
     monitor: MonitorConfig = field(default_factory=MonitorConfig)
     http: HttpConfig = field(default_factory=HttpConfig)
@@ -77,15 +74,20 @@ def load_config(path: Path) -> AppConfig:
 
 
 def parse_config(raw: dict[str, Any]) -> AppConfig:
-    cast_raw = raw.get("cast", {})
+    cast_raw = raw.get("cast", MISSING)
     schedule_raw = raw.get("schedule", {})
     monitor_raw = raw.get("monitor", {})
     http_raw = raw.get("http", {})
     ipad_raw = raw.get("ipad_backup", {})
 
+    if cast_raw is MISSING or not isinstance(cast_raw, dict):
+        raise ValueError("cast section is required")
+    cast_name = required_string(cast_raw, "name", "cast.name is required")
+    cast_url = required_string(cast_raw, "url", "cast.url is required")
+
     cast = CastConfig(
-        name=str(cast_raw.get("name", CastConfig.name)),
-        url=str(cast_raw.get("url", DEFAULT_STREAM_URL)),
+        name=cast_name,
+        url=cast_url,
         content_type=str(cast_raw.get("content_type", CastConfig.content_type)),
         discovery_timeout_seconds=float(
             cast_raw.get(
@@ -156,3 +158,10 @@ def parse_config(raw: dict[str, Any]) -> AppConfig:
         http=http,
         ipad_backup=ipad_backup,
     )
+
+
+def required_string(raw: dict[str, Any], key: str, message: str) -> str:
+    value = raw.get(key, MISSING)
+    if value is MISSING or str(value).strip() == "":
+        raise ValueError(message)
+    return str(value)

@@ -14,6 +14,7 @@ from white_noise_keeper.state import RuntimeState
 
 
 EXPECTED_URL = "http://example.local/white-noise.mp4"
+EXPECTED_CAST_NAME = "Example Cast"
 
 
 class InMemoryStateStore:
@@ -217,7 +218,7 @@ class MonitorTest(unittest.TestCase):
         cast = FakeCast(fail=True)
         pushcut = FakePushcut()
         config = AppConfig(
-            cast=CastConfig(url=EXPECTED_URL),
+            cast=CastConfig(name=EXPECTED_CAST_NAME, url=EXPECTED_URL),
             schedule=ScheduleConfig(active_start="20:00", active_end="08:00"),
             monitor=MonitorConfig(interval_seconds=5),
             ipad_backup=IpadBackupConfig(enabled=False),
@@ -297,7 +298,7 @@ class MonitorTest(unittest.TestCase):
 
 def build_monitor(cast, pushcut=None, state_store=None, clock=None):
     config = AppConfig(
-        cast=CastConfig(url=EXPECTED_URL),
+        cast=CastConfig(name=EXPECTED_CAST_NAME, url=EXPECTED_URL),
         schedule=ScheduleConfig(active_start="20:00", active_end="08:00"),
         monitor=MonitorConfig(interval_seconds=5),
         ipad_backup=IpadBackupConfig(
