@@ -1,0 +1,18 @@
+[Unit]
+Description=Google Nest white noise keeper
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=notify
+User=white-noise-keeper
+Group=white-noise-keeper
+ExecStart=/opt/white-noise-keeper/bin/white-noise-keeper --config /etc/white-noise-keeper/config.toml
+Restart=on-failure
+RestartSec=5s
+WatchdogSec=30s
+StateDirectory=white-noise-keeper
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "white-noise-keeper"
+version = "0.1.0"
+description = "Keep Google Nest white noise playback alive, with optional iPad backup via Pushcut."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "pychromecast>=14.0.0",
+]
+
+[project.scripts]
+white-noise-keeper = "white_noise_keeper.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
