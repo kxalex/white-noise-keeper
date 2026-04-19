@@ -15,6 +15,16 @@ UV_INSTALL_URL="${UV_INSTALL_URL:-https://astral.sh/uv/install.sh}"
 
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="${SUDO:-sudo}"; fi
 
+if ! command -v git >/dev/null 2>&1; then
+  echo "git is required but is not installed." >&2
+  if command -v apt-get >/dev/null 2>&1; then
+    echo "Install it with: sudo apt-get update && sudo apt-get install -y git" >&2
+  else
+    echo "Install git with your system package manager and rerun this script." >&2
+  fi
+  exit 1
+fi
+
 UV_BIN="${UV_BIN:-}"
 if [ -z "$UV_BIN" ]; then
   if command -v uv >/dev/null 2>&1; then
@@ -40,11 +50,6 @@ if [ -z "$PYTHON_BIN" ]; then
 fi
 
 "$PYTHON_BIN" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else "Python 3.11+ is required")'
-
-if command -v apt-get >/dev/null 2>&1; then
-  $SUDO apt-get update
-  $SUDO apt-get install -y git
-fi
 
 if [ ! -d "$REPO_DIR/.git" ]; then
   $SUDO mkdir -p "$(dirname "$REPO_DIR")"

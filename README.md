@@ -10,6 +10,12 @@ Run this on the Raspberry Pi:
 START_SERVICE=0 sh -c "$(curl -fsSL https://raw.githubusercontent.com/kxalex/white-noise-keeper/master/scripts/install-or-update-on-pi.sh)"
 ```
 
+Prerequisites: `curl`, `git`, and Python 3.11 or newer. On Raspberry Pi OS, install missing prerequisites with:
+
+```sh
+sudo apt-get update && sudo apt-get install -y curl git python3
+```
+
 The installer:
 
 - Creates `/opt/white-noise-keeper`.
