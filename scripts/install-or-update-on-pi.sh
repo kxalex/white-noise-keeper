@@ -11,8 +11,28 @@ CONFIG_FILE="${CONFIG_FILE:-$CONFIG_DIR/config.toml}"
 UPDATE_BIN="${UPDATE_BIN:-/usr/local/bin/update-white-noise-keeper}"
 RUN_TESTS="${RUN_TESTS:-1}"
 START_SERVICE="${START_SERVICE:-1}"
+UV_INSTALL_URL="${UV_INSTALL_URL:-https://astral.sh/uv/install.sh}"
 
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="${SUDO:-sudo}"; fi
+
+UV_BIN="${UV_BIN:-}"
+if [ -z "$UV_BIN" ]; then
+  if command -v uv >/dev/null 2>&1; then
+    UV_BIN="$(command -v uv)"
+  elif [ -x "$HOME/.local/bin/uv" ]; then
+    UV_BIN="$HOME/.local/bin/uv"
+  else
+    curl -LsSf "$UV_INSTALL_URL" | sh
+    if command -v uv >/dev/null 2>&1; then
+      UV_BIN="$(command -v uv)"
+    elif [ -x "$HOME/.local/bin/uv" ]; then
+      UV_BIN="$HOME/.local/bin/uv"
+    else
+      echo "uv installer finished, but uv was not found. Set UV_BIN=/path/to/uv and rerun." >&2
+      exit 1
+    fi
+  fi
+fi
 
 PYTHON_BIN="${PYTHON_BIN:-}"
 if [ -z "$PYTHON_BIN" ]; then
@@ -23,7 +43,7 @@ fi
 
 if command -v apt-get >/dev/null 2>&1; then
   $SUDO apt-get update
-  $SUDO apt-get install -y git python3-venv python3-pip
+  $SUDO apt-get install -y git
 fi
 
 if [ ! -d "$REPO_DIR/.git" ]; then
@@ -39,9 +59,8 @@ NOLOGIN=/usr/sbin/nologin
 id "$APP_USER" >/dev/null 2>&1 || \
   $SUDO useradd --system --user-group --home-dir "/var/lib/$SERVICE" --shell "$NOLOGIN" "$APP_USER"
 
-$SUDO "$PYTHON_BIN" -m venv "$VENV_DIR"
-$SUDO "$VENV_DIR/bin/pip" install --upgrade pip setuptools wheel
-$SUDO "$VENV_DIR/bin/pip" install --no-build-isolation "$REPO_DIR"
+$SUDO "$UV_BIN" venv --python "$PYTHON_BIN" "$VENV_DIR"
+$SUDO "$UV_BIN" pip install --python "$VENV_DIR/bin/python" "$REPO_DIR"
 
 $SUDO mkdir -p "$CONFIG_DIR"
 [ -f "$CONFIG_FILE" ] || $SUDO install -m 0644 "$REPO_DIR/config.example.toml" "$CONFIG_FILE"

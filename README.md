@@ -14,7 +14,8 @@ The installer:
 
 - Creates `/opt/white-noise-keeper`.
 - Pulls the latest Git version on every run.
-- Installs the Python package and dependencies into that venv.
+- Installs `uv` if needed.
+- Installs the Python package and dependencies into the venv with `uv`.
 - Creates a locked-down `white-noise-keeper` system user.
 - Copies `config.example.toml` to `/etc/white-noise-keeper/config.toml` only if that file does not already exist.
 - Installs and enables the systemd service.
