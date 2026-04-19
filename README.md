@@ -43,7 +43,13 @@ After the first install, run:
 update-white-noise-keeper
 ```
 
-That command pulls the latest Git changes, reinstalls the package, runs the unit tests, restarts the systemd service, and prints service status.
+That command pulls the latest Git changes, reuses the existing virtual environment, reinstalls the package, runs the unit tests, restarts the systemd service, and prints service status.
+
+To replace the virtual environment before installing:
+
+```sh
+update-white-noise-keeper --fresh
+```
 
 For a nonstandard checkout path:
 
@@ -55,6 +61,12 @@ To skip tests during an urgent update:
 
 ```sh
 RUN_TESTS=0 update-white-noise-keeper
+```
+
+To update without restarting the service:
+
+```sh
+START_SERVICE=0 update-white-noise-keeper
 ```
 
 ## Commands

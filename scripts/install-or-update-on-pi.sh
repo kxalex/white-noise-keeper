@@ -12,6 +12,34 @@ UPDATE_BIN="${UPDATE_BIN:-/usr/local/bin/update-white-noise-keeper}"
 RUN_TESTS="${RUN_TESTS:-1}"
 START_SERVICE="${START_SERVICE:-1}"
 UV_INSTALL_URL="${UV_INSTALL_URL:-https://astral.sh/uv/install.sh}"
+FRESH_INSTALL=0
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--fresh] [--help]
+
+Options:
+  --fresh  Replace the Python virtual environment before installing.
+  --help   Show this help.
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --fresh)
+      FRESH_INSTALL=1
+      ;;
+    --help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
 
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="${SUDO:-sudo}"; fi
 
@@ -64,7 +92,20 @@ NOLOGIN=/usr/sbin/nologin
 id "$APP_USER" >/dev/null 2>&1 || \
   $SUDO useradd --system --user-group --home-dir "/var/lib/$SERVICE" --shell "$NOLOGIN" "$APP_USER"
 
-$SUDO "$UV_BIN" venv --python "$PYTHON_BIN" "$VENV_DIR"
+if [ "$FRESH_INSTALL" = "1" ]; then
+  echo "Replacing virtual environment: $VENV_DIR"
+  $SUDO "$UV_BIN" venv --clear --python "$PYTHON_BIN" "$VENV_DIR"
+elif [ -x "$VENV_DIR/bin/python" ]; then
+  echo "Using existing virtual environment: $VENV_DIR"
+elif [ ! -e "$VENV_DIR" ]; then
+  echo "Creating virtual environment: $VENV_DIR"
+  $SUDO "$UV_BIN" venv --python "$PYTHON_BIN" "$VENV_DIR"
+else
+  echo "Virtual environment path exists but is invalid: $VENV_DIR" >&2
+  echo "Rerun with --fresh to replace it." >&2
+  exit 1
+fi
+
 $SUDO "$UV_BIN" pip install --python "$VENV_DIR/bin/python" "$REPO_DIR"
 
 $SUDO mkdir -p "$CONFIG_DIR"
