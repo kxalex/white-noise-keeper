@@ -35,10 +35,6 @@ class CastState:
     def playing(self) -> bool:
         return self.player_state in {PLAYER_PLAYING, PLAYER_BUFFERING}
 
-    @property
-    def paused(self) -> bool:
-        return self.player_state == PLAYER_PAUSED
-
 
 class CastClient(Protocol):
     def get_state(self) -> CastState:
@@ -48,12 +44,6 @@ class CastClient(Protocol):
         ...
 
     def play(self) -> None:
-        ...
-
-    def pause(self) -> None:
-        ...
-
-    def stop(self) -> None:
         ...
 
     def set_muted(self, muted: bool) -> None:
@@ -136,12 +126,6 @@ class PyChromecastClient:
     def play(self) -> None:
         self._require_cast().media_controller.play()
 
-    def pause(self) -> None:
-        self._require_cast().media_controller.pause()
-
-    def stop(self) -> None:
-        self._require_cast().media_controller.stop()
-
     def set_muted(self, muted: bool) -> None:
         LOG.info("Setting Chromecast muted state to %s", muted)
         cast = self._require_cast()
@@ -205,66 +189,63 @@ def _refresh_media_status(media, timeout: float = 2.0) -> bool:
 
 
 def _wait_for_volume_level(cast, expected_level: float) -> None:
-    deadline = time.monotonic() + VOLUME_CONFIRM_TIMEOUT_SECONDS
-    last_level = _optional_float(getattr(cast.status, "volume_level", None))
-
-    while time.monotonic() < deadline:
-        if _volume_level_matches(last_level, expected_level):
-            return
-
-        _refresh_receiver_status(cast)
-        last_level = _optional_float(getattr(cast.status, "volume_level", None))
-        if _volume_level_matches(last_level, expected_level):
-            return
-
-        time.sleep(VOLUME_CONFIRM_INTERVAL_SECONDS)
-
-    raise TimeoutError(
-        "Chromecast volume did not reach "
-        f"{expected_level:.2f}; last reported volume was {last_level}"
+    _wait_until(
+        read=lambda: _optional_float(getattr(cast.status, "volume_level", None)),
+        matches=lambda level: _volume_level_matches(level, expected_level),
+        refresh=lambda: _refresh_receiver_status(cast),
+        timeout=VOLUME_CONFIRM_TIMEOUT_SECONDS,
+        interval=VOLUME_CONFIRM_INTERVAL_SECONDS,
+        timeout_message=lambda level: (
+            "Chromecast volume did not reach "
+            f"{expected_level:.2f}; last reported volume was {level}"
+        ),
     )
 
 
 def _wait_for_volume_muted(cast, expected_muted: bool) -> None:
-    deadline = time.monotonic() + VOLUME_CONFIRM_TIMEOUT_SECONDS
-    last_muted = getattr(cast.status, "volume_muted", None)
-
-    while time.monotonic() < deadline:
-        if last_muted == expected_muted:
-            return
-
-        _refresh_receiver_status(cast)
-        last_muted = getattr(cast.status, "volume_muted", None)
-        if last_muted == expected_muted:
-            return
-
-        time.sleep(VOLUME_CONFIRM_INTERVAL_SECONDS)
-
-    raise TimeoutError(
-        "Chromecast muted state did not become "
-        f"{expected_muted}; last reported muted state was {last_muted}"
+    _wait_until(
+        read=lambda: getattr(cast.status, "volume_muted", None),
+        matches=lambda muted: muted == expected_muted,
+        refresh=lambda: _refresh_receiver_status(cast),
+        timeout=VOLUME_CONFIRM_TIMEOUT_SECONDS,
+        interval=VOLUME_CONFIRM_INTERVAL_SECONDS,
+        timeout_message=lambda muted: (
+            "Chromecast muted state did not become "
+            f"{expected_muted}; last reported muted state was {muted}"
+        ),
     )
 
 
 def _wait_for_media_loaded(media, expected_url: str) -> None:
-    deadline = time.monotonic() + MEDIA_LOAD_CONFIRM_TIMEOUT_SECONDS
-    last_content_id = getattr(media.status, "content_id", None)
+    _wait_until(
+        read=lambda: getattr(media.status, "content_id", None),
+        matches=lambda content_id: content_id == expected_url,
+        refresh=lambda: _refresh_media_status(media, timeout=0.5),
+        timeout=MEDIA_LOAD_CONFIRM_TIMEOUT_SECONDS,
+        interval=MEDIA_LOAD_CONFIRM_INTERVAL_SECONDS,
+        timeout_message=lambda content_id: (
+            "Chromecast media did not load expected content "
+            f"{expected_url!r}; last content ID was {content_id!r}"
+        ),
+    )
+
+
+def _wait_until(*, read, matches, refresh, timeout, interval, timeout_message) -> None:
+    deadline = time.monotonic() + timeout
+    last_value = read()
 
     while time.monotonic() < deadline:
-        if last_content_id == expected_url:
+        if matches(last_value):
             return
 
-        _refresh_media_status(media, timeout=0.5)
-        last_content_id = getattr(media.status, "content_id", None)
-        if last_content_id == expected_url:
+        refresh()
+        last_value = read()
+        if matches(last_value):
             return
 
-        time.sleep(MEDIA_LOAD_CONFIRM_INTERVAL_SECONDS)
+        time.sleep(interval)
 
-    raise TimeoutError(
-        "Chromecast media did not load expected content "
-        f"{expected_url!r}; last content ID was {last_content_id!r}"
-    )
+    raise TimeoutError(timeout_message(last_value))
 
 
 def _volume_level_matches(actual: float | None, expected: float) -> bool:
