@@ -434,6 +434,7 @@ def build_monitor(cast, pushcut=None, state_store=None, clock=None):
         state_store=state_store or InMemoryStateStore(),
         pushcut_client=pushcut or FakePushcut(),
         clock=clock or SequenceClock([100.0] * 20),
+        sleep=lambda _seconds: None,
     )
 
 

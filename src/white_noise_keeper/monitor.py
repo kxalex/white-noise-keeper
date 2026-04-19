@@ -15,6 +15,7 @@ from .time_window import in_active_window
 
 LOG = logging.getLogger(__name__)
 MEDIA_END_RELOAD_THRESHOLD_SECONDS = 60.0
+LOAD_VOLUME_RESTORE_DELAY_SECONDS = 1.0
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class WhiteNoiseKeeper:
         pushcut_client: PushcutClient | None = None,
         notifier: SystemdNotifier | None = None,
         clock=time.time,
+        sleep=time.sleep,
     ):
         self.config = config
         self.cast = cast_client
@@ -40,6 +42,7 @@ class WhiteNoiseKeeper:
         self.pushcut = pushcut_client
         self.notifier = notifier or SystemdNotifier()
         self.clock = clock
+        self.sleep = sleep
         self.state = state_store.load()
         self._lock = threading.RLock()
         self._api_server = None
@@ -282,6 +285,11 @@ class WhiteNoiseKeeper:
             self.cast.load(autoplay=autoplay)
         finally:
             if volume_before_reload is not None:
+                LOG.info(
+                    "Keeping Chromecast volume at 0.00 for %.1fs after load",
+                    LOAD_VOLUME_RESTORE_DELAY_SECONDS,
+                )
+                self.sleep(LOAD_VOLUME_RESTORE_DELAY_SECONDS)
                 LOG.info(
                     "Restoring Chromecast volume to %.2f after load",
                     volume_before_reload,

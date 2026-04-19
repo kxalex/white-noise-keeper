@@ -9,6 +9,9 @@ from typing import Protocol
 from .config import CastConfig
 
 LOG = logging.getLogger(__name__)
+VOLUME_CONFIRM_TIMEOUT_SECONDS = 2.0
+VOLUME_CONFIRM_INTERVAL_SECONDS = 0.05
+VOLUME_LEVEL_TOLERANCE = 0.01
 
 
 PLAYER_PLAYING = "PLAYING"
@@ -88,8 +91,7 @@ class PyChromecastClient:
     def get_state(self) -> CastState:
         cast = self._require_cast()
         media = cast.media_controller
-        _refresh_media_status(media)
-        status = media.status
+        status = media.status if _refresh_media_status(media) else None
         cast_status = cast.status
         return CastState(
             content_id=getattr(status, "content_id", None),
@@ -125,7 +127,10 @@ class PyChromecastClient:
 
     def set_volume_level(self, level: float) -> None:
         LOG.info("Setting Chromecast volume level to %.2f", level)
-        self._require_cast().set_volume(level)
+        cast = self._require_cast()
+        requested_level = cast.set_volume(level)
+        _wait_for_volume_level(cast, requested_level)
+        LOG.info("Chromecast volume confirmed at %.2f", requested_level)
 
     def close(self) -> None:
         if self._browser is not None:
@@ -154,7 +159,11 @@ def _optional_float(value) -> float | None:
     return float(value)
 
 
-def _refresh_media_status(media) -> None:
+def _refresh_media_status(media) -> bool:
+    if not _can_refresh_media_status_without_launch(media):
+        LOG.debug("Skipping media status refresh because media app is not running")
+        return False
+
     refreshed = threading.Event()
 
     def callback(_sent, _response):
@@ -165,6 +174,67 @@ def _refresh_media_status(media) -> None:
     except TypeError:
         media.update_status()
         time.sleep(0.2)
-        return
+        return True
 
     refreshed.wait(timeout=2)
+    return True
+
+
+def _wait_for_volume_level(cast, expected_level: float) -> None:
+    deadline = time.monotonic() + VOLUME_CONFIRM_TIMEOUT_SECONDS
+    last_level = _optional_float(getattr(cast.status, "volume_level", None))
+
+    while time.monotonic() < deadline:
+        if _volume_level_matches(last_level, expected_level):
+            return
+
+        _refresh_receiver_status(cast)
+        last_level = _optional_float(getattr(cast.status, "volume_level", None))
+        if _volume_level_matches(last_level, expected_level):
+            return
+
+        time.sleep(VOLUME_CONFIRM_INTERVAL_SECONDS)
+
+    raise TimeoutError(
+        "Chromecast volume did not reach "
+        f"{expected_level:.2f}; last reported volume was {last_level}"
+    )
+
+
+def _volume_level_matches(actual: float | None, expected: float) -> bool:
+    return actual is not None and abs(actual - expected) <= VOLUME_LEVEL_TOLERANCE
+
+
+def _refresh_receiver_status(cast) -> None:
+    receiver = getattr(getattr(cast, "socket_client", None), "receiver_controller", None)
+    if receiver is None:
+        return
+
+    refreshed = threading.Event()
+
+    def callback(_sent, _response):
+        refreshed.set()
+
+    receiver.update_status(callback_function=callback)
+    refreshed.wait(timeout=0.5)
+
+
+def _can_refresh_media_status_without_launch(media) -> bool:
+    socket_client = getattr(media, "_socket_client", None)
+    if socket_client is None:
+        return False
+    if getattr(media, "target_platform", False):
+        return True
+
+    namespace = getattr(media, "namespace", None)
+    app_namespaces = getattr(socket_client, "app_namespaces", ())
+    if namespace not in app_namespaces:
+        return False
+
+    if getattr(media, "app_must_match", False):
+        receiver_controller = getattr(socket_client, "receiver_controller", None)
+        app_id = getattr(receiver_controller, "app_id", None)
+        if app_id != getattr(media, "supporting_app_id", None):
+            return False
+
+    return True
