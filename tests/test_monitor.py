@@ -49,6 +49,7 @@ class FakeCast:
         self.state = cast_state(
             content_id=EXPECTED_URL,
             player_state=PLAYER_PLAYING if autoplay else PLAYER_PAUSED,
+            volume_muted=self.state.volume_muted,
         )
 
     def play(self):
@@ -127,7 +128,10 @@ class MonitorTest(unittest.TestCase):
         result = monitor.run_once(active_datetime())
 
         self.assertTrue(result.healthy)
-        self.assertEqual(cast.actions, [("load", True)])
+        self.assertEqual(
+            cast.actions,
+            [("set_muted", True), ("load", True), ("set_muted", False)],
+        )
 
     def test_outside_window_leaves_expected_media_alone(self):
         for player_state in (PLAYER_PLAYING, PLAYER_PAUSED):
@@ -170,7 +174,22 @@ class MonitorTest(unittest.TestCase):
                 result = monitor.run_once(outside_datetime())
 
                 self.assertTrue(result.healthy)
-                self.assertEqual(cast.actions, [("load", autoplay)])
+                self.assertEqual(
+                    cast.actions,
+                    [("set_muted", True), ("load", autoplay), ("set_muted", False)],
+                )
+
+    def test_near_end_reload_keeps_already_muted_nest_muted(self):
+        cast = FakeCast(
+            cast_state(current_time=3541, duration=3600, volume_muted=True)
+        )
+        monitor = build_monitor(cast=cast)
+
+        result = monitor.run_once(outside_datetime())
+
+        self.assertTrue(result.healthy)
+        self.assertEqual(cast.actions, [("load", True)])
+        self.assertTrue(cast.state.volume_muted)
 
     def test_expected_media_not_near_end_is_not_reloaded(self):
         cast = FakeCast(cast_state(current_time=3539, duration=3600))
