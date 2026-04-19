@@ -79,8 +79,12 @@ fi
 $SUDO systemctl daemon-reload
 $SUDO systemctl enable "$SERVICE"
 if [ "$START_SERVICE" = "1" ]; then
+  echo "Restarting systemd service: $SERVICE"
   $SUDO systemctl restart "$SERVICE"
+  echo "Service restarted. Current status:"
   $SUDO systemctl --no-pager --full status "$SERVICE" || true
+else
+  echo "Skipping service restart because START_SERVICE=0"
 fi
 
 echo "Done. Config: $CONFIG_FILE"
