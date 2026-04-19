@@ -2,7 +2,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from white_noise_keeper.cast import _wait_for_volume_level
+from white_noise_keeper.cast import PyChromecastClient, _wait_for_media_loaded, _wait_for_volume_level
+from white_noise_keeper.config import CastConfig
 
 
 class CastVolumeTest(unittest.TestCase):
@@ -29,12 +30,104 @@ class CastVolumeTest(unittest.TestCase):
                     _wait_for_volume_level(cast, 0.0)
 
 
+class CastMediaTest(unittest.TestCase):
+    def test_load_waits_until_expected_media_is_reported(self):
+        url = "http://example.local/white-noise.mp4"
+        media = FakeMediaController(url)
+        client = PyChromecastClient(CastConfig(name="Example", url=url))
+        client._cast = SimpleNamespace(media_controller=media)
+
+        client.load(autoplay=False)
+
+        self.assertEqual(
+            media.actions,
+            [
+                ("play_media", url, "video/mp4", False, "BUFFERED"),
+                ("block_until_active", 10),
+                ("update_status",),
+            ],
+        )
+        self.assertEqual(media.status.content_id, url)
+
+    def test_wait_for_media_loaded_refreshes_media_status_until_matched(self):
+        media = fake_media(content_id=None)
+
+        def update_status(callback_function=None):
+            media.status.content_id = "http://example.local/white-noise.mp4"
+            if callback_function is not None:
+                callback_function(True, {})
+
+        media.update_status = update_status
+
+        _wait_for_media_loaded(media, "http://example.local/white-noise.mp4")
+
+        self.assertEqual(
+            media.status.content_id,
+            "http://example.local/white-noise.mp4",
+        )
+
+    def test_wait_for_media_loaded_times_out_when_content_never_matches(self):
+        media = fake_media(content_id="http://example.local/other.mp4")
+
+        with patch("white_noise_keeper.cast.MEDIA_LOAD_CONFIRM_TIMEOUT_SECONDS", 0.01):
+            with patch("white_noise_keeper.cast.MEDIA_LOAD_CONFIRM_INTERVAL_SECONDS", 0.0):
+                with self.assertRaises(TimeoutError):
+                    _wait_for_media_loaded(
+                        media,
+                        "http://example.local/white-noise.mp4",
+                    )
+
+
 def fake_cast(volume_level):
     receiver_controller = SimpleNamespace(update_status=lambda callback_function=None: None)
     return SimpleNamespace(
         status=SimpleNamespace(volume_level=volume_level),
         socket_client=SimpleNamespace(receiver_controller=receiver_controller),
     )
+
+
+def fake_media(content_id):
+    def update_status(callback_function=None):
+        if callback_function is not None:
+            callback_function(True, {})
+
+    return SimpleNamespace(
+        status=SimpleNamespace(content_id=content_id),
+        target_platform=True,
+        _socket_client=SimpleNamespace(),
+        update_status=update_status,
+    )
+
+
+class FakeMediaController:
+    def __init__(self, expected_url):
+        self.expected_url = expected_url
+        self.status = SimpleNamespace(content_id=None)
+        self.target_platform = True
+        self._socket_client = SimpleNamespace()
+        self.actions = []
+
+    def play_media(
+        self,
+        url,
+        content_type,
+        *,
+        autoplay,
+        stream_type,
+        callback_function=None,
+    ):
+        self.actions.append(("play_media", url, content_type, autoplay, stream_type))
+        if callback_function is not None:
+            callback_function(True, {})
+
+    def block_until_active(self, timeout):
+        self.actions.append(("block_until_active", timeout))
+
+    def update_status(self, callback_function=None):
+        self.actions.append(("update_status",))
+        self.status.content_id = self.expected_url
+        if callback_function is not None:
+            callback_function(True, {})
 
 
 if __name__ == "__main__":

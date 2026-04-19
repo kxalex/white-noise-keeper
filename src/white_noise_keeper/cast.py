@@ -12,6 +12,8 @@ LOG = logging.getLogger(__name__)
 VOLUME_CONFIRM_TIMEOUT_SECONDS = 2.0
 VOLUME_CONFIRM_INTERVAL_SECONDS = 0.05
 VOLUME_LEVEL_TOLERANCE = 0.01
+MEDIA_LOAD_CONFIRM_TIMEOUT_SECONDS = 10.0
+MEDIA_LOAD_CONFIRM_INTERVAL_SECONDS = 0.1
 
 
 PLAYER_PLAYING = "PLAYING"
@@ -105,13 +107,31 @@ class PyChromecastClient:
     def load(self, autoplay: bool) -> None:
         cast = self._require_cast()
         media = cast.media_controller
+        loaded = threading.Event()
+        load_result = {}
+
+        def callback(sent, response):
+            load_result["sent"] = sent
+            load_result["response"] = response
+            loaded.set()
+
+        LOG.info("Loading Chromecast media: %s", self.config.url)
         media.play_media(
             self.config.url,
             self.config.content_type,
             autoplay=autoplay,
             stream_type="BUFFERED",
+            callback_function=callback,
         )
+        if not loaded.wait(timeout=MEDIA_LOAD_CONFIRM_TIMEOUT_SECONDS):
+            raise TimeoutError("Chromecast media load command did not complete")
+        if load_result.get("sent") is False:
+            raise RuntimeError(
+                f"Chromecast media load command failed: {load_result.get('response')}"
+            )
         media.block_until_active(timeout=10)
+        _wait_for_media_loaded(media, self.config.url)
+        LOG.info("Chromecast media confirmed loaded: %s", self.config.url)
 
     def play(self) -> None:
         self._require_cast().media_controller.play()
@@ -159,7 +179,7 @@ def _optional_float(value) -> float | None:
     return float(value)
 
 
-def _refresh_media_status(media) -> bool:
+def _refresh_media_status(media, timeout: float = 2.0) -> bool:
     if not _can_refresh_media_status_without_launch(media):
         LOG.debug("Skipping media status refresh because media app is not running")
         return False
@@ -176,7 +196,7 @@ def _refresh_media_status(media) -> bool:
         time.sleep(0.2)
         return True
 
-    refreshed.wait(timeout=2)
+    refreshed.wait(timeout=timeout)
     return True
 
 
@@ -198,6 +218,27 @@ def _wait_for_volume_level(cast, expected_level: float) -> None:
     raise TimeoutError(
         "Chromecast volume did not reach "
         f"{expected_level:.2f}; last reported volume was {last_level}"
+    )
+
+
+def _wait_for_media_loaded(media, expected_url: str) -> None:
+    deadline = time.monotonic() + MEDIA_LOAD_CONFIRM_TIMEOUT_SECONDS
+    last_content_id = getattr(media.status, "content_id", None)
+
+    while time.monotonic() < deadline:
+        if last_content_id == expected_url:
+            return
+
+        _refresh_media_status(media, timeout=0.5)
+        last_content_id = getattr(media.status, "content_id", None)
+        if last_content_id == expected_url:
+            return
+
+        time.sleep(MEDIA_LOAD_CONFIRM_INTERVAL_SECONDS)
+
+    raise TimeoutError(
+        "Chromecast media did not load expected content "
+        f"{expected_url!r}; last content ID was {last_content_id!r}"
     )
 
 

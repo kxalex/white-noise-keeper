@@ -15,6 +15,7 @@ from .time_window import in_active_window
 
 LOG = logging.getLogger(__name__)
 MEDIA_END_RELOAD_THRESHOLD_SECONDS = 60.0
+LOAD_VOLUME_SETTLE_DELAY_SECONDS = 1.0
 LOAD_VOLUME_RESTORE_DELAY_SECONDS = 1.0
 
 
@@ -281,6 +282,11 @@ class WhiteNoiseKeeper:
                 volume_before_reload,
             )
             self.cast.set_volume_level(0.0)
+            LOG.info(
+                "Keeping Chromecast volume at 0.00 for %.1fs before load",
+                LOAD_VOLUME_SETTLE_DELAY_SECONDS,
+            )
+            self.sleep(LOAD_VOLUME_SETTLE_DELAY_SECONDS)
         try:
             self.cast.load(autoplay=autoplay)
         finally:
