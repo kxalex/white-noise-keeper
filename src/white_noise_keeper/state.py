@@ -14,9 +14,8 @@ class RuntimeState:
     last_ipad_play_triggered_at: float | None = None
     nest_failure_started_at: float | None = None
     nest_recovered_started_at: float | None = None
-    force_start_active: bool = False
     force_start_until: float | None = None
-    suppressed_until: float | None = None
+    auto_start_suppressed: bool = False
     last_command: dict | None = None
     last_cast_state: dict | None = None
 
@@ -43,9 +42,8 @@ class StateStore:
             nest_recovered_started_at=_optional_float(
                 data.get("nest_recovered_started_at")
             ),
-            force_start_active=bool(data.get("force_start_active", False)),
             force_start_until=_optional_float(data.get("force_start_until")),
-            suppressed_until=_optional_float(data.get("suppressed_until")),
+            auto_start_suppressed=bool(data.get("auto_start_suppressed", False)),
             last_command=_optional_dict(data.get("last_command")),
             last_cast_state=_optional_dict(data.get("last_cast_state")),
         )

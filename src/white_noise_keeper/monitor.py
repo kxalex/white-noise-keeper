@@ -65,14 +65,18 @@ class WhiteNoiseKeeper:
             now = now or datetime.now().astimezone()
             timestamp = self.clock()
             active = self._active_window(now)
-            self._expire_overrides(now, timestamp)
-            suppressed = self._suppressed(timestamp)
-            effective_active = self._effective_active(active, suppressed, timestamp)
+            self._expire_overrides(timestamp)
+            suppressed = self.state.auto_start_suppressed
+            force_active = self._force_start_active(timestamp)
+            should_enforce_play = not suppressed and (active or force_active)
 
             try:
-                if effective_active:
+                if should_enforce_play:
                     return self._run_active_window(timestamp, active_window=active)
-                return self._run_outside_window(timestamp, suppressed=suppressed)
+                return self._run_outside_window(
+                    suppressed=suppressed,
+                    active_window=active,
+                )
             finally:
                 self.state_store.save(self.state)
 
@@ -99,7 +103,8 @@ class WhiteNoiseKeeper:
 
     def command_start(self) -> dict:
         with self._lock:
-            self.state.suppressed_until = None
+            self.state.auto_start_suppressed = False
+            self.state.force_start_until = None
             self._ensure_playing()
             self._record_command("start")
             self.state_store.save(self.state)
@@ -108,8 +113,7 @@ class WhiteNoiseKeeper:
     def command_start_force(self) -> dict:
         with self._lock:
             now = datetime.now().astimezone()
-            self.state.suppressed_until = None
-            self.state.force_start_active = True
+            self.state.auto_start_suppressed = False
             self.state.force_start_until = self._next_active_end(now).timestamp()
             self._ensure_playing()
             self._record_command("start-force")
@@ -118,12 +122,9 @@ class WhiteNoiseKeeper:
 
     def command_stop(self) -> dict:
         with self._lock:
-            now = datetime.now().astimezone()
-            self.state.force_start_active = False
             self.state.force_start_until = None
-            self.state.suppressed_until = self._next_active_start(now).timestamp()
-            self.cast.stop()
-            self._remember_stopped_state()
+            self.state.auto_start_suppressed = True
+            self._load_from_beginning_paused()
             self._record_command("stop")
             self.state_store.save(self.state)
             return self.status_snapshot()
@@ -133,18 +134,20 @@ class WhiteNoiseKeeper:
             now = datetime.now().astimezone()
             timestamp = self.clock()
             active = self._active_window(now)
-            self._expire_overrides(now, timestamp)
-            suppressed = self._suppressed(timestamp)
-            effective_active = self._effective_active(active, suppressed, timestamp)
+            self._expire_overrides(timestamp)
+            suppressed = self.state.auto_start_suppressed
+            force_active = self._force_start_active(timestamp)
+            effective_active = not suppressed and (active or force_active)
             self.state_store.save(self.state)
             return {
                 "ok": True,
                 "active_window": active,
                 "effective_active": effective_active,
-                "force_start_active": self.state.force_start_active,
+                "force_start_active": force_active,
                 "force_start_until": self.state.force_start_until,
+                "auto_start_suppressed": self.state.auto_start_suppressed,
                 "suppressed": suppressed,
-                "suppressed_until": self.state.suppressed_until,
+                "suppressed_until": None,
                 "schedule": {
                     "active_start": self.config.schedule.active_start,
                     "active_end": self.config.schedule.active_end,
@@ -184,15 +187,18 @@ class WhiteNoiseKeeper:
             message="Nest is not playing expected media",
         )
 
-    def _run_outside_window(self, timestamp: float, suppressed: bool) -> KeeperResult:
+    def _run_outside_window(
+        self,
+        suppressed: bool,
+        active_window: bool,
+    ) -> KeeperResult:
         try:
+            self._ensure_loaded(autoplay=False)
+            healthy = True
             if suppressed:
-                healthy = True
                 message = "Nest auto-start is suppressed"
             else:
-                self._ensure_preloaded_paused()
-                healthy = True
-                message = "Nest is preloaded and paused"
+                message = "Nest has white noise loaded"
         except Exception as exc:
             LOG.warning("Nest preload attempt failed: %s", exc)
             healthy = False
@@ -201,7 +207,7 @@ class WhiteNoiseKeeper:
         self.state.nest_failure_started_at = None
         self.state.nest_recovered_started_at = None
 
-        if self.state.ipad_backup_active:
+        if not active_window and self.state.ipad_backup_active:
             if self._stop_ipad_due_to_window_end():
                 message = "Active window ended; iPad backup stopped"
                 healthy = True
@@ -209,17 +215,10 @@ class WhiteNoiseKeeper:
                 message = "Active window ended; iPad backup stop failed"
                 healthy = False
 
-        return KeeperResult(healthy=healthy, active_window=False, message=message)
+        return KeeperResult(healthy=healthy, active_window=active_window, message=message)
 
     def _ensure_playing(self) -> CastState:
-        state = self.cast.get_state()
-        self._remember_cast_state(state)
-        if not expected_media_loaded(state, self.config.cast.url):
-            LOG.info("Expected media is not loaded; loading and playing")
-            self.cast.load(autoplay=True)
-            state = self.cast.get_state()
-            self._remember_cast_state(state)
-            return state
+        state = self._ensure_loaded(autoplay=True)
         if not state.playing:
             LOG.info("Expected media is loaded but not playing; sending play")
             self.cast.play()
@@ -228,35 +227,26 @@ class WhiteNoiseKeeper:
             return state
         return state
 
-    def _ensure_preloaded_paused(self) -> None:
+    def _ensure_loaded(self, autoplay: bool) -> CastState:
         state = self.cast.get_state()
         self._remember_cast_state(state)
-        if expected_media_loaded(state, self.config.cast.url) and state.paused:
-            return
+        if expected_media_loaded(state, self.config.cast.url):
+            return state
 
-        previous_muted = state.volume_muted
-        if not expected_media_loaded(state, self.config.cast.url):
-            LOG.info("Preloading white noise paused outside active window")
-            self._load_and_pause_with_mute_restore(previous_muted)
-            return
+        if autoplay:
+            LOG.info("Expected media is not loaded; loading and playing")
+        else:
+            LOG.info("Expected media is not loaded; loading paused")
+        self.cast.load(autoplay=autoplay)
+        state = self.cast.get_state()
+        self._remember_cast_state(state)
+        return state
 
-        if state.playing:
-            LOG.info("Pausing preloaded white noise outside active window")
-            self.cast.pause()
-            return
-
-        LOG.info("Reloading expected media so it can be paused outside active window")
-        self._load_and_pause_with_mute_restore(previous_muted)
-
-    def _load_and_pause_with_mute_restore(self, previous_muted: bool | None) -> None:
-        if previous_muted is not True:
-            self.cast.set_muted(True)
-        try:
-            self.cast.load(autoplay=True)
-            self.cast.pause()
-        finally:
-            if previous_muted is not None:
-                self.cast.set_muted(previous_muted)
+    def _load_from_beginning_paused(self) -> None:
+        LOG.info("Loading white noise paused from the beginning")
+        self.cast.load(autoplay=False)
+        state = self.cast.get_state()
+        self._remember_cast_state(state)
 
     def _is_expected_playing(self, state: CastState) -> bool:
         return expected_media_loaded(state, self.config.cast.url) and state.playing
@@ -344,45 +334,15 @@ class WhiteNoiseKeeper:
             self.config.schedule.active_end_time,
         )
 
-    def _effective_active(self, active: bool, suppressed: bool, timestamp: float) -> bool:
-        if suppressed:
-            return False
-        if active:
-            return True
-        return (
-            self.state.force_start_active
-            and self.state.force_start_until is not None
-            and timestamp < self.state.force_start_until
-        )
-
-    def _suppressed(self, timestamp: float) -> bool:
-        return (
-            self.state.suppressed_until is not None
-            and timestamp < self.state.suppressed_until
-        )
-
-    def _expire_overrides(self, now: datetime, timestamp: float) -> None:
-        if self.state.suppressed_until is not None and timestamp >= self.state.suppressed_until:
-            self.state.suppressed_until = None
-        if (
-            self.state.force_start_active
-            and self.state.force_start_until is not None
-            and timestamp >= self.state.force_start_until
-        ):
-            self.state.force_start_active = False
+    def _expire_overrides(self, timestamp: float) -> None:
+        if self.state.force_start_until is not None and timestamp >= self.state.force_start_until:
             self.state.force_start_until = None
 
-    def _next_active_start(self, now: datetime) -> datetime:
-        start = self.config.schedule.active_start_time
-        candidate = now.replace(
-            hour=start.hour,
-            minute=start.minute,
-            second=0,
-            microsecond=0,
+    def _force_start_active(self, timestamp: float) -> bool:
+        return (
+            self.state.force_start_until is not None
+            and timestamp < self.state.force_start_until
         )
-        if candidate <= now:
-            candidate += timedelta(days=1)
-        return candidate
 
     def _next_active_end(self, now: datetime) -> datetime:
         end = self.config.schedule.active_end_time
@@ -410,14 +370,4 @@ class WhiteNoiseKeeper:
             "duration": state.duration,
             "volume_muted": state.volume_muted,
             "volume_level": state.volume_level,
-        }
-
-    def _remember_stopped_state(self) -> None:
-        self.state.last_cast_state = {
-            "content_id": self.config.cast.url,
-            "player_state": "STOPPED",
-            "current_time": None,
-            "duration": None,
-            "volume_muted": None,
-            "volume_level": None,
         }

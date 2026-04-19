@@ -120,28 +120,27 @@ class MonitorTest(unittest.TestCase):
         self.assertTrue(result.healthy)
         self.assertIn(("load", True), cast.actions)
 
-    def test_outside_window_preloads_and_pauses_wrong_media_with_mute_restore(self):
-        cast = FakeCast(
-            cast_state(
-                content_id="http://example.local/other.mp4",
-                player_state=PLAYER_PLAYING,
-                volume_muted=False,
-            )
-        )
+    def test_outside_window_leaves_expected_media_alone(self):
+        for player_state in (PLAYER_PLAYING, PLAYER_PAUSED):
+            with self.subTest(player_state=player_state):
+                cast = FakeCast(
+                    cast_state(content_id=EXPECTED_URL, player_state=player_state)
+                )
+                monitor = build_monitor(cast=cast)
+
+                result = monitor.run_once(outside_datetime())
+
+                self.assertTrue(result.healthy)
+                self.assertEqual(cast.actions, [])
+
+    def test_outside_window_loads_wrong_media_paused(self):
+        cast = FakeCast(cast_state(content_id="http://example.local/other.mp4"))
         monitor = build_monitor(cast=cast)
 
         result = monitor.run_once(outside_datetime())
 
         self.assertTrue(result.healthy)
-        self.assertEqual(
-            cast.actions,
-            [
-                ("set_muted", True),
-                ("load", True),
-                ("pause",),
-                ("set_muted", False),
-            ],
-        )
+        self.assertEqual(cast.actions, [("load", False)])
 
     def test_ipad_backup_triggers_after_failure_threshold_and_not_again_during_cooldown(self):
         cast = FakeCast(fail=True)
@@ -235,65 +234,77 @@ class MonitorTest(unittest.TestCase):
         self.assertFalse(monitor.run_once(active_datetime()).healthy)
         self.assertEqual(pushcut.play_calls, 0)
 
-    def test_start_force_keeps_playing_outside_window(self):
-        cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED))
-        monitor = build_monitor(cast=cast)
-        monitor.state.force_start_active = True
-        monitor.state.force_start_until = 1000.0
-
-        result = monitor.run_once(outside_datetime())
-
-        self.assertTrue(result.healthy)
-        self.assertIn(("play",), cast.actions)
-
     def test_force_start_expires_after_until_timestamp(self):
         cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED))
         monitor = build_monitor(cast=cast, clock=SequenceClock([1001.0]))
-        monitor.state.force_start_active = True
         monitor.state.force_start_until = 1000.0
 
         result = monitor.run_once(outside_datetime())
 
         self.assertTrue(result.healthy)
-        self.assertFalse(monitor.state.force_start_active)
+        self.assertIsNone(monitor.state.force_start_until)
         self.assertNotIn(("play",), cast.actions)
 
     def test_stop_inside_window_suppresses_auto_start(self):
         cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PLAYING))
         monitor = build_monitor(cast=cast, clock=SequenceClock([100.0] * 10))
+        monitor.state.force_start_until = 999999.0
 
         snapshot = monitor.command_stop()
         result = monitor.run_once(active_datetime())
 
-        self.assertEqual(cast.actions, [("stop",)])
+        self.assertIsNone(monitor.state.force_start_until)
+        self.assertEqual(cast.actions, [("load", False)])
         self.assertTrue(snapshot["suppressed"])
+        self.assertTrue(monitor.state.auto_start_suppressed)
         self.assertTrue(result.healthy)
+        self.assertTrue(result.active_window)
         self.assertEqual(result.message, "Nest auto-start is suppressed")
 
-    def test_start_clears_suppression_and_plays_once(self):
+    def test_stopped_expected_media_can_be_started_manually_without_repause(self):
+        cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PLAYING))
+        monitor = build_monitor(cast=cast)
+
+        monitor.command_stop()
+        cast.actions.clear()
+        cast.state = cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PLAYING)
+
+        result = monitor.run_once(outside_datetime())
+
+        self.assertTrue(result.healthy)
+        self.assertEqual(cast.actions, [])
+
+    def test_start_clears_suppression_plays_once_then_respects_manual_pause(self):
         cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED))
         monitor = build_monitor(cast=cast)
-        monitor.state.suppressed_until = 1000.0
+        monitor.state.auto_start_suppressed = True
+        monitor.state.force_start_until = 999999.0
 
         snapshot = monitor.command_start()
 
-        self.assertIsNone(monitor.state.suppressed_until)
+        self.assertFalse(monitor.state.auto_start_suppressed)
+        self.assertIsNone(monitor.state.force_start_until)
         self.assertEqual(snapshot["last_command"]["action"], "start")
         self.assertIn(("play",), cast.actions)
 
-    def test_stop_clears_force_and_suppresses_until_next_window(self):
-        cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PLAYING))
-        monitor = build_monitor(cast=cast)
-        monitor.state.force_start_active = True
-        monitor.state.force_start_until = 999999.0
+        cast.actions.clear()
+        cast.state = cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED)
+        result = monitor.run_once(outside_datetime())
 
-        snapshot = monitor.command_stop()
+        self.assertTrue(result.healthy)
+        self.assertEqual(cast.actions, [])
 
-        self.assertFalse(monitor.state.force_start_active)
-        self.assertIsNone(monitor.state.force_start_until)
-        self.assertIsNotNone(monitor.state.suppressed_until)
-        self.assertEqual(snapshot["last_command"]["action"], "stop")
-        self.assertIn(("stop",), cast.actions)
+    def test_start_force_replays_after_manual_pause_until_active_window_end(self):
+        cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED))
+        monitor = build_monitor(cast=cast, clock=SequenceClock([100.0] * 10))
+
+        monitor.command_start_force()
+        cast.actions.clear()
+        cast.state = cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED)
+        result = monitor.run_once(outside_datetime())
+
+        self.assertTrue(result.healthy)
+        self.assertIn(("play",), cast.actions)
 
 
 def build_monitor(cast, pushcut=None, state_store=None, clock=None):
