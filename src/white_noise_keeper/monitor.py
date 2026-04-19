@@ -238,7 +238,10 @@ class WhiteNoiseKeeper:
                     LOG.info("Expected media is near the end; reloading and playing")
                 else:
                     LOG.info("Expected media is near the end; reloading paused")
-                self._reload_with_temporary_mute(state, autoplay=reload_autoplay)
+                self._reload_with_temporary_volume_zero(
+                    state,
+                    autoplay=reload_autoplay,
+                )
                 state = self.cast.get_state()
                 self._remember_cast_state(state)
             return state
@@ -261,16 +264,19 @@ class WhiteNoiseKeeper:
     def _is_expected_playing(self, state: CastState) -> bool:
         return expected_media_loaded(state, self.config.cast.url) and state.playing
 
-    def _reload_with_temporary_mute(self, state: CastState, autoplay: bool) -> None:
-        muted_before_reload = state.volume_muted
-        should_restore_unmuted = muted_before_reload is False
-        if should_restore_unmuted:
-            self.cast.set_muted(True)
+    def _reload_with_temporary_volume_zero(
+        self,
+        state: CastState,
+        autoplay: bool,
+    ) -> None:
+        volume_before_reload = state.volume_level
+        if volume_before_reload is not None:
+            self.cast.set_volume_level(0.0)
         try:
             self.cast.load(autoplay=autoplay)
         finally:
-            if should_restore_unmuted:
-                self.cast.set_muted(False)
+            if volume_before_reload is not None:
+                self.cast.set_volume_level(volume_before_reload)
 
     def _near_media_end(self, state: CastState) -> bool:
         if state.current_time is None or state.duration is None:

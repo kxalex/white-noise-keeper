@@ -54,6 +54,9 @@ class CastClient(Protocol):
     def set_muted(self, muted: bool) -> None:
         ...
 
+    def set_volume_level(self, level: float) -> None:
+        ...
+
     def close(self) -> None:
         ...
 
@@ -119,6 +122,9 @@ class PyChromecastClient:
 
     def set_muted(self, muted: bool) -> None:
         self._require_cast().set_volume_muted(muted)
+
+    def set_volume_level(self, level: float) -> None:
+        self._require_cast().set_volume(level)
 
     def close(self) -> None:
         if self._browser is not None:
