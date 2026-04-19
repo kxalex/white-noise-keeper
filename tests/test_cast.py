@@ -2,11 +2,57 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from white_noise_keeper.cast import PyChromecastClient, _wait_for_media_loaded, _wait_for_volume_level
+from white_noise_keeper.cast import (
+    PyChromecastClient,
+    _wait_for_media_loaded,
+    _wait_for_volume_level,
+    _wait_for_volume_muted,
+)
 from white_noise_keeper.config import CastConfig
 
 
 class CastVolumeTest(unittest.TestCase):
+    def test_set_muted_waits_until_receiver_status_confirms_muted(self):
+        cast = fake_cast(volume_muted=False)
+
+        def update_status(callback_function=None):
+            cast.status.volume_muted = True
+            if callback_function is not None:
+                callback_function(True, {})
+
+        cast.socket_client.receiver_controller.update_status = update_status
+        client = PyChromecastClient(
+            CastConfig(name="Example", url="http://example.local")
+        )
+        client._cast = cast
+
+        client.set_muted(True)
+
+        self.assertEqual(cast.actions, [("set_volume_muted", True)])
+        self.assertTrue(cast.status.volume_muted)
+
+    def test_wait_for_volume_muted_refreshes_receiver_status_until_matched(self):
+        cast = fake_cast(volume_muted=False)
+
+        def update_status(callback_function=None):
+            cast.status.volume_muted = True
+            if callback_function is not None:
+                callback_function(True, {})
+
+        cast.socket_client.receiver_controller.update_status = update_status
+
+        _wait_for_volume_muted(cast, True)
+
+        self.assertTrue(cast.status.volume_muted)
+
+    def test_wait_for_volume_muted_times_out_when_status_never_matches(self):
+        cast = fake_cast(volume_muted=False)
+
+        with patch("white_noise_keeper.cast.VOLUME_CONFIRM_TIMEOUT_SECONDS", 0.01):
+            with patch("white_noise_keeper.cast.VOLUME_CONFIRM_INTERVAL_SECONDS", 0.0):
+                with self.assertRaises(TimeoutError):
+                    _wait_for_volume_muted(cast, True)
+
     def test_wait_for_volume_level_refreshes_receiver_status_until_matched(self):
         cast = fake_cast(volume_level=0.9)
 
@@ -78,12 +124,20 @@ class CastMediaTest(unittest.TestCase):
                     )
 
 
-def fake_cast(volume_level):
+def fake_cast(volume_level=0.9, volume_muted=False):
     receiver_controller = SimpleNamespace(update_status=lambda callback_function=None: None)
-    return SimpleNamespace(
-        status=SimpleNamespace(volume_level=volume_level),
+
+    cast = SimpleNamespace(
+        actions=[],
+        status=SimpleNamespace(volume_level=volume_level, volume_muted=volume_muted),
         socket_client=SimpleNamespace(receiver_controller=receiver_controller),
     )
+
+    def set_volume_muted(muted):
+        cast.actions.append(("set_volume_muted", muted))
+
+    cast.set_volume_muted = set_volume_muted
+    return cast
 
 
 def fake_media(content_id):

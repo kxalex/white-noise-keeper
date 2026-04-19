@@ -143,7 +143,11 @@ class PyChromecastClient:
         self._require_cast().media_controller.stop()
 
     def set_muted(self, muted: bool) -> None:
-        self._require_cast().set_volume_muted(muted)
+        LOG.info("Setting Chromecast muted state to %s", muted)
+        cast = self._require_cast()
+        cast.set_volume_muted(muted)
+        _wait_for_volume_muted(cast, muted)
+        LOG.info("Chromecast muted state confirmed as %s", muted)
 
     def set_volume_level(self, level: float) -> None:
         LOG.info("Setting Chromecast volume level to %.2f", level)
@@ -218,6 +222,27 @@ def _wait_for_volume_level(cast, expected_level: float) -> None:
     raise TimeoutError(
         "Chromecast volume did not reach "
         f"{expected_level:.2f}; last reported volume was {last_level}"
+    )
+
+
+def _wait_for_volume_muted(cast, expected_muted: bool) -> None:
+    deadline = time.monotonic() + VOLUME_CONFIRM_TIMEOUT_SECONDS
+    last_muted = getattr(cast.status, "volume_muted", None)
+
+    while time.monotonic() < deadline:
+        if last_muted == expected_muted:
+            return
+
+        _refresh_receiver_status(cast)
+        last_muted = getattr(cast.status, "volume_muted", None)
+        if last_muted == expected_muted:
+            return
+
+        time.sleep(VOLUME_CONFIRM_INTERVAL_SECONDS)
+
+    raise TimeoutError(
+        "Chromecast muted state did not become "
+        f"{expected_muted}; last reported muted state was {last_muted}"
     )
 
 

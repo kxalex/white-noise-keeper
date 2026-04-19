@@ -31,12 +31,22 @@ class InMemoryStateStore:
 
 
 class FakeCast:
-    def __init__(self, state=None, fail=False):
+    def __init__(
+        self,
+        state=None,
+        fail=False,
+        fail_load=False,
+        fail_restore_volume=False,
+        fail_restore_mute=False,
+    ):
         self.state = state or cast_state(
             content_id=EXPECTED_URL,
             player_state=PLAYER_PLAYING,
         )
         self.fail = fail
+        self.fail_load = fail_load
+        self.fail_restore_volume = fail_restore_volume
+        self.fail_restore_mute = fail_restore_mute
         self.actions = []
 
     def get_state(self):
@@ -46,6 +56,8 @@ class FakeCast:
 
     def load(self, autoplay):
         self.actions.append(("load", autoplay))
+        if self.fail_load:
+            raise RuntimeError("load failed")
         self.state = cast_state(
             content_id=EXPECTED_URL,
             player_state=PLAYER_PLAYING if autoplay else PLAYER_PAUSED,
@@ -58,6 +70,8 @@ class FakeCast:
         self.state = cast_state(
             content_id=self.state.content_id,
             player_state=PLAYER_PLAYING,
+            volume_muted=self.state.volume_muted,
+            volume_level=self.state.volume_level,
         )
 
     def pause(self):
@@ -65,6 +79,8 @@ class FakeCast:
         self.state = cast_state(
             content_id=self.state.content_id,
             player_state=PLAYER_PAUSED,
+            volume_muted=self.state.volume_muted,
+            volume_level=self.state.volume_level,
         )
 
     def stop(self):
@@ -72,10 +88,14 @@ class FakeCast:
         self.state = cast_state(
             content_id=self.state.content_id,
             player_state="STOPPED",
+            volume_muted=self.state.volume_muted,
+            volume_level=self.state.volume_level,
         )
 
     def set_muted(self, muted):
         self.actions.append(("set_muted", muted))
+        if self.fail_restore_mute and muted is False:
+            raise RuntimeError("mute restore failed")
         self.state = cast_state(
             content_id=self.state.content_id,
             player_state=self.state.player_state,
@@ -85,6 +105,8 @@ class FakeCast:
 
     def set_volume_level(self, level):
         self.actions.append(("set_volume_level", level))
+        if self.fail_restore_volume:
+            raise RuntimeError("volume restore failed")
         self.state = cast_state(
             content_id=self.state.content_id,
             player_state=self.state.player_state,
@@ -141,7 +163,12 @@ class MonitorTest(unittest.TestCase):
         self.assertTrue(result.healthy)
         self.assertEqual(
             cast.actions,
-            [("set_volume_level", 0.0), ("load", True), ("set_volume_level", 0.77)],
+            [
+                ("set_muted", True),
+                ("load", True),
+                ("set_volume_level", 0.77),
+                ("set_muted", False),
+            ],
         )
 
     def test_outside_window_leaves_expected_media_alone(self):
@@ -166,7 +193,12 @@ class MonitorTest(unittest.TestCase):
         self.assertTrue(result.healthy)
         self.assertEqual(
             cast.actions,
-            [("set_volume_level", 0.0), ("load", False), ("set_volume_level", 0.77)],
+            [
+                ("set_muted", True),
+                ("load", False),
+                ("set_volume_level", 0.77),
+                ("set_muted", False),
+            ],
         )
 
     def test_outside_window_reloads_near_end_preserving_play_state(self):
@@ -191,9 +223,10 @@ class MonitorTest(unittest.TestCase):
                 self.assertEqual(
                     cast.actions,
                     [
-                        ("set_volume_level", 0.0),
+                        ("set_muted", True),
                         ("load", autoplay),
                         ("set_volume_level", 0.77),
+                        ("set_muted", False),
                     ],
                 )
 
@@ -208,11 +241,11 @@ class MonitorTest(unittest.TestCase):
         self.assertTrue(result.healthy)
         self.assertEqual(
             cast.actions,
-            [("set_volume_level", 0.0), ("load", True), ("set_volume_level", 0.77)],
+            [("load", True)],
         )
         self.assertTrue(cast.state.volume_muted)
 
-    def test_near_end_reload_skips_volume_changes_when_volume_is_unknown(self):
+    def test_near_end_reload_restores_mute_when_volume_level_is_unknown(self):
         cast = FakeCast(
             cast_state(current_time=3541, duration=3600, volume_level=None)
         )
@@ -221,8 +254,97 @@ class MonitorTest(unittest.TestCase):
         result = monitor.run_once(outside_datetime())
 
         self.assertTrue(result.healthy)
-        self.assertEqual(cast.actions, [("load", True)])
+        self.assertEqual(
+            cast.actions,
+            [("set_muted", True), ("load", True), ("set_muted", False)],
+        )
         self.assertIsNone(cast.state.volume_level)
+
+    def test_near_end_reload_skips_temporary_mute_when_muted_state_is_unknown(self):
+        cast = FakeCast(
+            cast_state(current_time=3541, duration=3600, volume_muted=None)
+        )
+        monitor = build_monitor(cast=cast)
+
+        result = monitor.run_once(outside_datetime())
+
+        self.assertTrue(result.healthy)
+        self.assertEqual(cast.actions, [("load", True)])
+        self.assertIsNone(cast.state.volume_muted)
+
+    def test_load_failure_attempts_audio_restore_and_reraises_original_exception(self):
+        cast = FakeCast(
+            cast_state(content_id="http://example.local/other.mp4"),
+            fail_load=True,
+            fail_restore_volume=True,
+        )
+        monitor = build_monitor(cast=cast)
+
+        with self.assertRaisesRegex(RuntimeError, "load failed"):
+            monitor.command_stop()
+
+        self.assertEqual(
+            cast.actions,
+            [
+                ("set_muted", True),
+                ("load", False),
+                ("set_volume_level", 0.77),
+                ("set_muted", False),
+            ],
+        )
+
+    def test_restore_volume_failure_still_attempts_unmute_and_reraises(self):
+        cast = FakeCast(
+            cast_state(content_id="http://example.local/other.mp4"),
+            fail_restore_volume=True,
+        )
+        monitor = build_monitor(cast=cast)
+
+        with self.assertRaisesRegex(RuntimeError, "volume restore failed"):
+            monitor.command_stop()
+
+        self.assertEqual(
+            cast.actions,
+            [
+                ("set_muted", True),
+                ("load", False),
+                ("set_volume_level", 0.77),
+                ("set_volume_level", 0.77),
+                ("set_muted", False),
+            ],
+        )
+
+    def test_failed_audio_restore_is_retried_before_next_load(self):
+        cast = FakeCast(
+            cast_state(content_id="http://example.local/other.mp4"),
+            fail_load=True,
+            fail_restore_mute=True,
+        )
+        monitor = build_monitor(cast=cast)
+
+        with self.assertRaisesRegex(RuntimeError, "load failed"):
+            monitor.command_stop()
+
+        self.assertTrue(cast.state.volume_muted)
+
+        cast.fail_load = False
+        cast.fail_restore_mute = False
+        cast.actions.clear()
+        result = monitor.run_once(outside_datetime())
+
+        self.assertTrue(result.healthy)
+        self.assertEqual(
+            cast.actions,
+            [
+                ("set_volume_level", 0.77),
+                ("set_muted", False),
+                ("set_muted", True),
+                ("load", False),
+                ("set_volume_level", 0.77),
+                ("set_muted", False),
+            ],
+        )
+        self.assertFalse(cast.state.volume_muted)
 
     def test_expected_media_not_near_end_is_not_reloaded(self):
         cast = FakeCast(cast_state(current_time=3539, duration=3600))
@@ -360,7 +482,12 @@ class MonitorTest(unittest.TestCase):
         self.assertIsNone(monitor.state.force_start_until)
         self.assertEqual(
             cast.actions,
-            [("set_volume_level", 0.0), ("load", False), ("set_volume_level", 0.77)],
+            [
+                ("set_muted", True),
+                ("load", False),
+                ("set_volume_level", 0.77),
+                ("set_muted", False),
+            ],
         )
         self.assertTrue(snapshot["suppressed"])
         self.assertTrue(monitor.state.auto_start_suppressed)

@@ -15,8 +15,8 @@ from .time_window import in_active_window
 
 LOG = logging.getLogger(__name__)
 MEDIA_END_RELOAD_THRESHOLD_SECONDS = 60.0
-LOAD_VOLUME_SETTLE_DELAY_SECONDS = 1.0
-LOAD_VOLUME_RESTORE_DELAY_SECONDS = 1.0
+LOAD_MUTE_SETTLE_DELAY_SECONDS = 1.0
+LOAD_MUTE_RESTORE_DELAY_SECONDS = 1.0
 
 
 @dataclass(frozen=True)
@@ -24,6 +24,12 @@ class KeeperResult:
     healthy: bool
     active_window: bool
     message: str
+
+
+@dataclass(frozen=True)
+class AudioSnapshot:
+    volume_muted: bool
+    volume_level: float | None
 
 
 class WhiteNoiseKeeper:
@@ -45,6 +51,7 @@ class WhiteNoiseKeeper:
         self.clock = clock
         self.sleep = sleep
         self.state = state_store.load()
+        self._pending_audio_restore: AudioSnapshot | None = None
         self._lock = threading.RLock()
         self._api_server = None
 
@@ -235,6 +242,10 @@ class WhiteNoiseKeeper:
     def _ensure_loaded(self, autoplay: bool) -> CastState:
         state = self.cast.get_state()
         self._remember_cast_state(state)
+        if self._pending_audio_restore is not None:
+            self._restore_pending_audio_state()
+            state = self.cast.get_state()
+            self._remember_cast_state(state)
         if expected_media_loaded(state, self.config.cast.url):
             if self._near_media_end(state):
                 reload_autoplay = state.playing
@@ -242,7 +253,7 @@ class WhiteNoiseKeeper:
                     LOG.info("Expected media is near the end; reloading and playing")
                 else:
                     LOG.info("Expected media is near the end; reloading paused")
-                self._load_with_temporary_volume_zero(
+                self._load_with_temporary_mute(
                     state,
                     autoplay=reload_autoplay,
                 )
@@ -254,7 +265,7 @@ class WhiteNoiseKeeper:
             LOG.info("Expected media is not loaded; loading and playing")
         else:
             LOG.info("Expected media is not loaded; loading paused")
-        self._load_with_temporary_volume_zero(state, autoplay=autoplay)
+        self._load_with_temporary_mute(state, autoplay=autoplay)
         state = self.cast.get_state()
         self._remember_cast_state(state)
         return state
@@ -263,44 +274,90 @@ class WhiteNoiseKeeper:
         LOG.info("Loading white noise paused from the beginning")
         state = self.cast.get_state()
         self._remember_cast_state(state)
-        self._load_with_temporary_volume_zero(state, autoplay=False)
+        self._load_with_temporary_mute(state, autoplay=False)
         state = self.cast.get_state()
         self._remember_cast_state(state)
 
     def _is_expected_playing(self, state: CastState) -> bool:
         return expected_media_loaded(state, self.config.cast.url) and state.playing
 
-    def _load_with_temporary_volume_zero(
+    def _load_with_temporary_mute(
         self,
         state: CastState,
         autoplay: bool,
     ) -> None:
-        volume_before_reload = state.volume_level
-        if volume_before_reload is not None:
-            LOG.info(
-                "Temporarily lowering Chromecast volume from %.2f to 0.00 for load",
-                volume_before_reload,
-            )
-            self.cast.set_volume_level(0.0)
-            LOG.info(
-                "Keeping Chromecast volume at 0.00 for %.1fs before load",
-                LOAD_VOLUME_SETTLE_DELAY_SECONDS,
-            )
-            self.sleep(LOAD_VOLUME_SETTLE_DELAY_SECONDS)
-        try:
+        audio_before_load = _audio_snapshot_from_state(state)
+        if audio_before_load is None:
+            LOG.info("Chromecast muted state is unknown; loading without temporary mute")
             self.cast.load(autoplay=autoplay)
-        finally:
-            if volume_before_reload is not None:
-                LOG.info(
-                    "Keeping Chromecast volume at 0.00 for %.1fs after load",
-                    LOAD_VOLUME_RESTORE_DELAY_SECONDS,
+            return
+
+        if audio_before_load.volume_muted:
+            self.cast.load(autoplay=autoplay)
+            return
+
+        self._pending_audio_restore = audio_before_load
+        try:
+            LOG.info(
+                "Temporarily muting Chromecast for load; current volume is %s",
+                _format_optional_volume(audio_before_load.volume_level),
+            )
+            self.cast.set_muted(True)
+            LOG.info(
+                "Keeping Chromecast muted for %.1fs before load",
+                LOAD_MUTE_SETTLE_DELAY_SECONDS,
+            )
+            self.sleep(LOAD_MUTE_SETTLE_DELAY_SECONDS)
+            self.cast.load(autoplay=autoplay)
+            self._restore_audio_state(audio_before_load, after_failed_load=False)
+            self._pending_audio_restore = None
+        except Exception:
+            if self._restore_audio_state_best_effort(audio_before_load):
+                self._pending_audio_restore = None
+            raise
+
+    def _restore_pending_audio_state(self) -> None:
+        audio_state = self._pending_audio_restore
+        if audio_state is None:
+            return
+        LOG.info("Restoring pending Chromecast audio state before next action")
+        self._restore_audio_state(audio_state, after_failed_load=True)
+        self._pending_audio_restore = None
+
+    def _restore_audio_state(self, audio_state: AudioSnapshot, after_failed_load: bool) -> None:
+        LOG.info(
+            "Keeping Chromecast muted for %.1fs %s",
+            LOAD_MUTE_RESTORE_DELAY_SECONDS,
+            "after failed load" if after_failed_load else "after load",
+        )
+        self.sleep(LOAD_MUTE_RESTORE_DELAY_SECONDS)
+        if audio_state.volume_level is not None:
+            LOG.info(
+                "Restoring Chromecast volume to %.2f",
+                audio_state.volume_level,
+            )
+            self.cast.set_volume_level(audio_state.volume_level)
+        LOG.info("Restoring Chromecast muted state to %s", audio_state.volume_muted)
+        self.cast.set_muted(audio_state.volume_muted)
+
+    def _restore_audio_state_best_effort(self, audio_state: AudioSnapshot) -> bool:
+        restored = True
+        try:
+            self._restore_audio_state(audio_state, after_failed_load=True)
+        except Exception as restore_exc:
+            restored = False
+            LOG.warning(
+                "Failed to restore Chromecast audio state after failed load: %s",
+                restore_exc,
+            )
+            try:
+                self.cast.set_muted(audio_state.volume_muted)
+            except Exception as mute_restore_exc:
+                LOG.warning(
+                    "Failed to restore Chromecast muted state after failed load: %s",
+                    mute_restore_exc,
                 )
-                self.sleep(LOAD_VOLUME_RESTORE_DELAY_SECONDS)
-                LOG.info(
-                    "Restoring Chromecast volume to %.2f after load",
-                    volume_before_reload,
-                )
-                self.cast.set_volume_level(volume_before_reload)
+        return restored
 
     def _near_media_end(self, state: CastState) -> bool:
         if state.current_time is None or state.duration is None:
@@ -432,3 +489,18 @@ class WhiteNoiseKeeper:
             "volume_muted": state.volume_muted,
             "volume_level": state.volume_level,
         }
+
+
+def _format_optional_volume(volume: float | None) -> str:
+    if volume is None:
+        return "unknown"
+    return f"{volume:.2f}"
+
+
+def _audio_snapshot_from_state(state: CastState) -> AudioSnapshot | None:
+    if state.volume_muted is None:
+        return None
+    return AudioSnapshot(
+        volume_muted=state.volume_muted,
+        volume_level=state.volume_level,
+    )
