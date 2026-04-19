@@ -164,7 +164,10 @@ class MonitorTest(unittest.TestCase):
         result = monitor.run_once(outside_datetime())
 
         self.assertTrue(result.healthy)
-        self.assertEqual(cast.actions, [("load", False)])
+        self.assertEqual(
+            cast.actions,
+            [("set_volume_level", 0.0), ("load", False), ("set_volume_level", 0.77)],
+        )
 
     def test_outside_window_reloads_near_end_preserving_play_state(self):
         for player_state, autoplay in (
@@ -355,7 +358,10 @@ class MonitorTest(unittest.TestCase):
         result = monitor.run_once(active_datetime())
 
         self.assertIsNone(monitor.state.force_start_until)
-        self.assertEqual(cast.actions, [("load", False)])
+        self.assertEqual(
+            cast.actions,
+            [("set_volume_level", 0.0), ("load", False), ("set_volume_level", 0.77)],
+        )
         self.assertTrue(snapshot["suppressed"])
         self.assertTrue(monitor.state.auto_start_suppressed)
         self.assertTrue(result.healthy)

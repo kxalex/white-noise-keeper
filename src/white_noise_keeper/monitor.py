@@ -238,7 +238,7 @@ class WhiteNoiseKeeper:
                     LOG.info("Expected media is near the end; reloading and playing")
                 else:
                     LOG.info("Expected media is near the end; reloading paused")
-                self._reload_with_temporary_volume_zero(
+                self._load_with_temporary_volume_zero(
                     state,
                     autoplay=reload_autoplay,
                 )
@@ -250,21 +250,23 @@ class WhiteNoiseKeeper:
             LOG.info("Expected media is not loaded; loading and playing")
         else:
             LOG.info("Expected media is not loaded; loading paused")
-        self.cast.load(autoplay=autoplay)
+        self._load_with_temporary_volume_zero(state, autoplay=autoplay)
         state = self.cast.get_state()
         self._remember_cast_state(state)
         return state
 
     def _load_from_beginning_paused(self) -> None:
         LOG.info("Loading white noise paused from the beginning")
-        self.cast.load(autoplay=False)
+        state = self.cast.get_state()
+        self._remember_cast_state(state)
+        self._load_with_temporary_volume_zero(state, autoplay=False)
         state = self.cast.get_state()
         self._remember_cast_state(state)
 
     def _is_expected_playing(self, state: CastState) -> bool:
         return expected_media_loaded(state, self.config.cast.url) and state.playing
 
-    def _reload_with_temporary_volume_zero(
+    def _load_with_temporary_volume_zero(
         self,
         state: CastState,
         autoplay: bool,
@@ -272,7 +274,7 @@ class WhiteNoiseKeeper:
         volume_before_reload = state.volume_level
         if volume_before_reload is not None:
             LOG.info(
-                "Temporarily lowering Chromecast volume from %.2f to 0.00 for reload",
+                "Temporarily lowering Chromecast volume from %.2f to 0.00 for load",
                 volume_before_reload,
             )
             self.cast.set_volume_level(0.0)
@@ -281,7 +283,7 @@ class WhiteNoiseKeeper:
         finally:
             if volume_before_reload is not None:
                 LOG.info(
-                    "Restoring Chromecast volume to %.2f after reload",
+                    "Restoring Chromecast volume to %.2f after load",
                     volume_before_reload,
                 )
                 self.cast.set_volume_level(volume_before_reload)
