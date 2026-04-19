@@ -271,11 +271,19 @@ class WhiteNoiseKeeper:
     ) -> None:
         volume_before_reload = state.volume_level
         if volume_before_reload is not None:
+            LOG.info(
+                "Temporarily lowering Chromecast volume from %.2f to 0.00 for reload",
+                volume_before_reload,
+            )
             self.cast.set_volume_level(0.0)
         try:
             self.cast.load(autoplay=autoplay)
         finally:
             if volume_before_reload is not None:
+                LOG.info(
+                    "Restoring Chromecast volume to %.2f after reload",
+                    volume_before_reload,
+                )
                 self.cast.set_volume_level(volume_before_reload)
 
     def _near_media_end(self, state: CastState) -> bool:

@@ -124,6 +124,7 @@ class PyChromecastClient:
         self._require_cast().set_volume_muted(muted)
 
     def set_volume_level(self, level: float) -> None:
+        LOG.info("Setting Chromecast volume level to %.2f", level)
         self._require_cast().set_volume(level)
 
     def close(self) -> None:
