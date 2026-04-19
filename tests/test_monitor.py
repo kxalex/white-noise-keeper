@@ -120,6 +120,15 @@ class MonitorTest(unittest.TestCase):
         self.assertTrue(result.healthy)
         self.assertIn(("load", True), cast.actions)
 
+    def test_active_window_reloads_playing_media_near_end(self):
+        cast = FakeCast(cast_state(current_time=3541, duration=3600))
+        monitor = build_monitor(cast=cast)
+
+        result = monitor.run_once(active_datetime())
+
+        self.assertTrue(result.healthy)
+        self.assertEqual(cast.actions, [("load", True)])
+
     def test_outside_window_leaves_expected_media_alone(self):
         for player_state in (PLAYER_PLAYING, PLAYER_PAUSED):
             with self.subTest(player_state=player_state):
@@ -141,6 +150,49 @@ class MonitorTest(unittest.TestCase):
 
         self.assertTrue(result.healthy)
         self.assertEqual(cast.actions, [("load", False)])
+
+    def test_outside_window_reloads_near_end_preserving_play_state(self):
+        for player_state, autoplay in (
+            (PLAYER_PLAYING, True),
+            (PLAYER_PAUSED, False),
+        ):
+            with self.subTest(player_state=player_state):
+                cast = FakeCast(
+                    cast_state(
+                        content_id=EXPECTED_URL,
+                        player_state=player_state,
+                        current_time=3541,
+                        duration=3600,
+                    )
+                )
+                monitor = build_monitor(cast=cast)
+
+                result = monitor.run_once(outside_datetime())
+
+                self.assertTrue(result.healthy)
+                self.assertEqual(cast.actions, [("load", autoplay)])
+
+    def test_expected_media_not_near_end_is_not_reloaded(self):
+        cast = FakeCast(cast_state(current_time=3539, duration=3600))
+        monitor = build_monitor(cast=cast)
+
+        result = monitor.run_once(outside_datetime())
+
+        self.assertTrue(result.healthy)
+        self.assertEqual(cast.actions, [])
+
+    def test_missing_media_timing_does_not_reload(self):
+        for current_time, duration in ((None, 3600), (3541, None), (3541, 0)):
+            with self.subTest(current_time=current_time, duration=duration):
+                cast = FakeCast(
+                    cast_state(current_time=current_time, duration=duration)
+                )
+                monitor = build_monitor(cast=cast)
+
+                result = monitor.run_once(outside_datetime())
+
+                self.assertTrue(result.healthy)
+                self.assertEqual(cast.actions, [])
 
     def test_ipad_backup_triggers_after_failure_threshold_and_not_again_during_cooldown(self):
         cast = FakeCast(fail=True)
@@ -333,13 +385,15 @@ def build_monitor(cast, pushcut=None, state_store=None, clock=None):
 def cast_state(
     content_id=EXPECTED_URL,
     player_state=PLAYER_PLAYING,
+    current_time=0,
+    duration=3600,
     volume_muted=False,
 ):
     return CastState(
         content_id=content_id,
         player_state=player_state,
-        current_time=0,
-        duration=3600,
+        current_time=current_time,
+        duration=duration,
         volume_muted=volume_muted,
         volume_level=0.77,
     )

@@ -14,6 +14,7 @@ from .systemd import SystemdNotifier
 from .time_window import in_active_window
 
 LOG = logging.getLogger(__name__)
+MEDIA_END_RELOAD_THRESHOLD_SECONDS = 60.0
 
 
 @dataclass(frozen=True)
@@ -231,6 +232,15 @@ class WhiteNoiseKeeper:
         state = self.cast.get_state()
         self._remember_cast_state(state)
         if expected_media_loaded(state, self.config.cast.url):
+            if self._near_media_end(state):
+                reload_autoplay = state.playing
+                if reload_autoplay:
+                    LOG.info("Expected media is near the end; reloading and playing")
+                else:
+                    LOG.info("Expected media is near the end; reloading paused")
+                self.cast.load(autoplay=reload_autoplay)
+                state = self.cast.get_state()
+                self._remember_cast_state(state)
             return state
 
         if autoplay:
@@ -250,6 +260,16 @@ class WhiteNoiseKeeper:
 
     def _is_expected_playing(self, state: CastState) -> bool:
         return expected_media_loaded(state, self.config.cast.url) and state.playing
+
+    def _near_media_end(self, state: CastState) -> bool:
+        if state.current_time is None or state.duration is None:
+            return False
+        if state.duration <= 0:
+            return False
+        return (
+            state.duration - state.current_time
+            <= MEDIA_END_RELOAD_THRESHOLD_SECONDS
+        )
 
     def _record_nest_failure(self, timestamp: float) -> None:
         if self.state.nest_failure_started_at is None:
