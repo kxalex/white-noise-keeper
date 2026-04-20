@@ -105,7 +105,7 @@ class PyChromecastClient:
             load_result["response"] = response
             loaded.set()
 
-        LOG.info("Loading Chromecast media: %s", self.config.url)
+        LOG.info("Loading media: %s", self.config.url)
         media.play_media(
             self.config.url,
             self.config.content_type,
@@ -121,7 +121,7 @@ class PyChromecastClient:
             )
         media.block_until_active(timeout=10)
         _wait_for_media_loaded(media, self.config.url)
-        LOG.info("Chromecast media confirmed loaded: %s", self.config.url)
+        LOG.info("Media confirmed loaded: %s", self.config.url)
 
     def play(self) -> None:
         self._require_cast().media_controller.play()
@@ -130,14 +130,14 @@ class PyChromecastClient:
         cast = self._require_cast()
         cast.set_volume_muted(muted)
         _wait_for_volume_muted(cast, muted)
-        LOG.info("Chromecast muted state is %s", muted)
+        LOG.info("Muted state is %s", muted)
 
     def set_volume_level(self, level: float) -> None:
-        LOG.info("Setting Chromecast volume level to %.2f", level)
+        LOG.info("Setting volume level to %.2f", level)
         cast = self._require_cast()
         requested_level = cast.set_volume(level)
         _wait_for_volume_level(cast, requested_level)
-        LOG.info("Chromecast volume confirmed at %.2f", requested_level)
+        LOG.info("Volume confirmed at %.2f", requested_level)
 
     def close(self) -> None:
         if self._browser is not None:
