@@ -1,7 +1,7 @@
 import unittest
 
 from white_noise_keeper.cast import CastState, PLAYER_PAUSED, PLAYER_PLAYING
-from white_noise_keeper.playback import WhiteNoisePlayback
+from white_noise_keeper.playback import WhiteNoisePlayback, _format_current_media
 
 
 EXPECTED_URL = "http://example.local/white-noise.mp4"
@@ -74,6 +74,22 @@ class FakeCast:
 
 
 class PlaybackTest(unittest.TestCase):
+    def test_format_current_media_returns_idle_when_nothing_is_loaded(self):
+        state = cast_state(content_id=None, player_state=None)
+
+        self.assertEqual(_format_current_media(state), "Idle")
+
+    def test_format_current_media_includes_loaded_media_and_state(self):
+        state = cast_state(
+            content_id="http://example.local/other.mp4",
+            player_state=PLAYER_PAUSED,
+        )
+
+        self.assertEqual(
+            _format_current_media(state),
+            "http://example.local/other.mp4 (PAUSED)",
+        )
+
     def test_ensure_playing_plays_when_expected_media_is_paused(self):
         cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED))
         playback = build_playback(cast)
