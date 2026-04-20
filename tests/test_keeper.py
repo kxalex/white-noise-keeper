@@ -223,23 +223,43 @@ class KeeperTest(unittest.TestCase):
     def test_force_start_expires_after_until_timestamp(self):
         cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED))
         keeper = build_keeper(cast=cast, clock=SequenceClock([1001.0]))
-        keeper.state.force_start_until = 1000.0
+        keeper.state.manual_mode = "force"
+        keeper.state.manual_until = 1000.0
 
         result = keeper.run_once(outside_datetime())
 
         self.assertTrue(result.healthy)
-        self.assertIsNone(keeper.state.force_start_until)
+        self.assertIsNone(keeper.state.manual_mode)
+        self.assertIsNone(keeper.state.manual_until)
         self.assertNotIn(("play",), cast.actions)
 
-    def test_stop_inside_window_suppresses_auto_start(self):
+    def test_stop_suppresses_until_next_active_window_and_is_cleared_by_expiry(self):
+        cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED))
+        keeper = build_keeper(cast=cast, clock=SequenceClock([100.0, 201.0]))
+        keeper.state.manual_mode = "suppress"
+        keeper.state.manual_until = 200.0
+
+        first = keeper.run_once(active_datetime())
+        self.assertTrue(first.healthy)
+        self.assertEqual(cast.actions, [])
+        self.assertEqual(first.message, "Nest auto-start is suppressed")
+
+        second = keeper.run_once(active_datetime())
+        self.assertTrue(second.healthy)
+        self.assertIn(("play",), cast.actions)
+        self.assertIsNone(keeper.state.manual_mode)
+        self.assertIsNone(keeper.state.manual_until)
+
+    def test_stop_sets_suppression_until_next_active_window(self):
         cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PLAYING))
         keeper = build_keeper(cast=cast, clock=SequenceClock([100.0] * 10))
-        keeper.state.force_start_until = 999999.0
+        keeper.state.manual_mode = "force"
+        keeper.state.manual_until = 999999.0
 
         snapshot = keeper.command_stop()
-        result = keeper.run_once(active_datetime())
 
-        self.assertIsNone(keeper.state.force_start_until)
+        self.assertEqual(keeper.state.manual_mode, "suppress")
+        self.assertIsNotNone(keeper.state.manual_until)
         self.assertEqual(
             cast.actions,
             [
@@ -248,34 +268,19 @@ class KeeperTest(unittest.TestCase):
             ],
         )
         self.assertTrue(snapshot["suppressed"])
-        self.assertTrue(keeper.state.auto_start_suppressed)
-        self.assertTrue(result.healthy)
-        self.assertTrue(result.active_window)
-        self.assertEqual(result.message, "Nest auto-start is suppressed")
-
-    def test_stopped_expected_media_can_be_started_manually_without_repause(self):
-        cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PLAYING))
-        keeper = build_keeper(cast=cast)
-
-        keeper.command_stop()
-        cast.actions.clear()
-        cast.state = cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PLAYING)
-
-        result = keeper.run_once(outside_datetime())
-
-        self.assertTrue(result.healthy)
-        self.assertEqual(cast.actions, [])
+        self.assertEqual(snapshot["manual_mode"], "suppress")
+        self.assertTrue(snapshot["manual_until"] is not None)
 
     def test_start_clears_suppression_plays_once_then_respects_manual_pause(self):
         cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED))
         keeper = build_keeper(cast=cast)
-        keeper.state.auto_start_suppressed = True
-        keeper.state.force_start_until = 999999.0
+        keeper.state.manual_mode = "suppress"
+        keeper.state.manual_until = 999999.0
 
         snapshot = keeper.command_start()
 
-        self.assertFalse(keeper.state.auto_start_suppressed)
-        self.assertIsNone(keeper.state.force_start_until)
+        self.assertIsNone(keeper.state.manual_mode)
+        self.assertIsNone(keeper.state.manual_until)
         self.assertEqual(snapshot["last_command"]["action"], "start")
         self.assertIn(("play",), cast.actions)
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 
 LOG = logging.getLogger(__name__)
@@ -14,8 +14,8 @@ class RuntimeState:
     last_ipad_play_triggered_at: float | None = None
     nest_failure_started_at: float | None = None
     nest_recovered_started_at: float | None = None
-    force_start_until: float | None = None
-    auto_start_suppressed: bool = False
+    manual_mode: str | None = None
+    manual_until: float | None = None
     last_command: dict | None = None
     last_cast_state: dict | None = None
 
@@ -42,8 +42,8 @@ class StateStore:
             nest_recovered_started_at=_optional_float(
                 data.get("nest_recovered_started_at")
             ),
-            force_start_until=_optional_float(data.get("force_start_until")),
-            auto_start_suppressed=bool(data.get("auto_start_suppressed", False)),
+            manual_mode=_optional_str(data.get("manual_mode")),
+            manual_until=_optional_float(data.get("manual_until")),
             last_command=_optional_dict(data.get("last_command")),
             last_cast_state=_optional_dict(data.get("last_cast_state")),
         )
@@ -51,8 +51,18 @@ class StateStore:
     def save(self, state: RuntimeState) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = self.path.with_suffix(self.path.suffix + ".tmp")
+        data = {
+            "ipad_backup_active": state.ipad_backup_active,
+            "last_ipad_play_triggered_at": state.last_ipad_play_triggered_at,
+            "nest_failure_started_at": state.nest_failure_started_at,
+            "nest_recovered_started_at": state.nest_recovered_started_at,
+            "manual_mode": state.manual_mode,
+            "manual_until": state.manual_until,
+            "last_command": state.last_command,
+            "last_cast_state": state.last_cast_state,
+        }
         with temp_path.open("w", encoding="utf-8") as state_file:
-            json.dump(asdict(state), state_file, indent=2, sort_keys=True)
+            json.dump(data, state_file, indent=2, sort_keys=True)
             state_file.write("\n")
         temp_path.replace(self.path)
 
@@ -61,6 +71,14 @@ def _optional_float(value):
     if value is None:
         return None
     return float(value)
+
+
+def _optional_str(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return None
 
 
 def _optional_dict(value):
