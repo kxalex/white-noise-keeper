@@ -172,7 +172,6 @@ class PlaybackTest(unittest.TestCase):
         cast = FakeCast(
             cast_state(content_id="http://example.local/other.mp4"),
             fail_load=True,
-            fail_restore_volume=True,
         )
         playback = build_playback(cast)
 
@@ -183,7 +182,10 @@ class PlaybackTest(unittest.TestCase):
 
     def test_restore_volume_failure_still_attempts_unmute_and_reraises(self):
         cast = FakeCast(
-            cast_state(content_id="http://example.local/other.mp4"),
+            cast_state(
+                content_id="http://example.local/other.mp4",
+                volume_level=0.0,
+            ),
             fail_restore_volume=True,
         )
         playback = build_playback(cast)
@@ -196,8 +198,8 @@ class PlaybackTest(unittest.TestCase):
             [
                 ("set_muted", True),
                 ("load", False),
-                ("set_volume_level", 0.77),
-                ("set_volume_level", 0.77),
+                ("set_volume_level", 0.80),
+                ("set_volume_level", 0.80),
                 ("set_muted", False),
             ],
         )
@@ -223,11 +225,9 @@ class PlaybackTest(unittest.TestCase):
         self.assertEqual(
             cast.actions,
             [
-                ("set_volume_level", 0.77),
                 ("set_muted", False),
                 ("set_muted", True),
                 ("load", False),
-                ("set_volume_level", 0.77),
                 ("set_muted", False),
             ],
         )
@@ -276,7 +276,7 @@ def cast_state(
     )
 
 
-def muted_load_actions(autoplay, volume=0.77):
+def muted_load_actions(autoplay, volume=None):
     actions = [("set_muted", True), ("load", autoplay)]
     if volume is not None:
         actions.append(("set_volume_level", volume))

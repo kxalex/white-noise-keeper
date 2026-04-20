@@ -236,7 +236,6 @@ class KeeperTest(unittest.TestCase):
             [
                 ("set_muted", True),
                 ("load", False),
-                ("set_volume_level", 0.77),
                 ("set_muted", False),
             ],
         )
