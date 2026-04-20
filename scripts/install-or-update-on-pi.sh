@@ -84,7 +84,7 @@ if [ ! -d "$REPO_DIR/.git" ]; then
   $SUDO chown "$(id -u):$(id -g)" "$(dirname "$REPO_DIR")"
   git clone "$REPO_URL" "$REPO_DIR"
 else
-  git -C "$REPO_DIR" pull --ff-only
+  git -C "$REPO_DIR" pull --rebase --autostash origin master
 fi
 
 NOLOGIN=/usr/sbin/nologin
