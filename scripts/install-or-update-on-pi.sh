@@ -9,6 +9,7 @@ VENV_DIR="${VENV_DIR:-/opt/white-noise-keeper}"
 CONFIG_DIR="${CONFIG_DIR:-/etc/white-noise-keeper}"
 CONFIG_FILE="${CONFIG_FILE:-$CONFIG_DIR/config.toml}"
 UPDATE_BIN="${UPDATE_BIN:-/usr/local/bin/update-white-noise-keeper}"
+STATE_FILE="${STATE_FILE:-/var/lib/$SERVICE/state.json}"
 RUN_TESTS="${RUN_TESTS:-1}"
 START_SERVICE="${START_SERVICE:-1}"
 UV_INSTALL_URL="${UV_INSTALL_URL:-https://astral.sh/uv/install.sh}"
@@ -116,6 +117,9 @@ $SUDO install -m 0755 "$REPO_DIR/scripts/install-or-update-on-pi.sh" "$UPDATE_BI
 if [ "$RUN_TESTS" = "1" ]; then
   "$VENV_DIR/bin/python" -m unittest discover -s "$REPO_DIR/tests" -v
 fi
+
+$SUDO rm -f "$STATE_FILE"
+echo "Reset runtime state: $STATE_FILE"
 
 $SUDO systemctl daemon-reload
 $SUDO systemctl enable "$SERVICE"
