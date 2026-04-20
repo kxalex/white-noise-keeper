@@ -15,9 +15,8 @@ class FakeKeeper:
         return {
             "ok": True,
             "active_window": False,
-            "effective_active": False,
-            "force_start_active": False,
-            "suppressed": False,
+            "manual_mode": None,
+            "manual_until": None,
             "last_cast_state": {"player_state": "PAUSED"},
         }
 

@@ -33,7 +33,6 @@ class WhiteNoiseKeeper:
         pushcut_client: PushcutClient | None = None,
         notifier: SystemdNotifier | None = None,
         clock=time.time,
-        sleep=time.sleep,
     ):
         self.config = config
         self.cast = cast_client
@@ -41,7 +40,6 @@ class WhiteNoiseKeeper:
         self.pushcut = pushcut_client
         self.notifier = notifier or SystemdNotifier()
         self.clock = clock
-        self.sleep = sleep
         self.state = state_store.load()
         self.playback = WhiteNoisePlayback(
             cast_client,
@@ -74,13 +72,12 @@ class WhiteNoiseKeeper:
             timestamp = self.clock()
             active = self._active_window(now)
             self._expire_manual_override(timestamp)
-            force_active = self._manual_mode_active("force", timestamp)
-            suppressed = self._manual_mode_active("suppress", timestamp)
+            manual_mode = self.state.manual_mode
 
             try:
-                if suppressed:
+                if manual_mode == "suppress":
                     return self._run_suppressed_window(active_window=active)
-                if force_active or active:
+                if manual_mode == "force" or active:
                     return self._run_active_window(timestamp, active_window=active)
                 return self._run_outside_window(active_window=active)
             finally:
@@ -142,20 +139,12 @@ class WhiteNoiseKeeper:
             timestamp = self.clock()
             active = self._active_window(now)
             self._expire_manual_override(timestamp)
-            force_active = self._manual_mode_active("force", timestamp)
-            suppressed = self._manual_mode_active("suppress", timestamp)
-            effective_active = force_active or (active and not suppressed)
             self.state_store.save(self.state)
             return {
                 "ok": True,
                 "active_window": active,
-                "effective_active": effective_active,
                 "manual_mode": self.state.manual_mode,
                 "manual_until": self.state.manual_until,
-                "force_start_active": force_active,
-                "force_start_until": self.state.manual_until if self.state.manual_mode == "force" else None,
-                "suppressed": suppressed,
-                "suppressed_until": self.state.manual_until if self.state.manual_mode == "suppress" else None,
                 "schedule": {
                     "active_start": self.config.schedule.active_start,
                     "active_end": self.config.schedule.active_end,
@@ -328,12 +317,6 @@ class WhiteNoiseKeeper:
         if self.state.manual_until is not None and timestamp >= self.state.manual_until:
             self.state.manual_mode = None
             self.state.manual_until = None
-
-    def _manual_mode_active(self, mode: str, timestamp: float) -> bool:
-        return (
-            self.state.manual_mode == mode
-            and (self.state.manual_until is None or timestamp < self.state.manual_until)
-        )
 
     def _next_active_end(self, now: datetime) -> datetime:
         end = self.config.schedule.active_end_time

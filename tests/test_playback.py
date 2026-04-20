@@ -187,7 +187,7 @@ class PlaybackTest(unittest.TestCase):
         playback = build_playback(cast)
 
         with self.assertRaisesRegex(RuntimeError, "load failed"):
-            playback.load_from_beginning_paused()
+            playback.ensure_loaded(autoplay=False)
 
         self.assertEqual(
             cast.actions,
@@ -220,7 +220,7 @@ class PlaybackTest(unittest.TestCase):
         playback = build_playback(cast)
 
         with self.assertRaisesRegex(RuntimeError, "load failed"):
-            playback.load_from_beginning_paused()
+            playback.ensure_loaded(autoplay=False)
 
         self.assertTrue(cast.state.volume_muted)
 

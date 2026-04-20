@@ -130,12 +130,6 @@ class WhiteNoisePlayback:
         self.audio_load_guard.load(state, autoplay=False)
         return self._get_state()
 
-    def load_from_beginning_paused(self) -> None:
-        LOG.info("Loading white noise paused from the beginning")
-        state = self._get_state()
-        self.audio_load_guard.load(state, autoplay=False)
-        self._get_state()
-
     def pause_at_beginning(self) -> None:
         state = self._get_state()
         if state.content_id is None:

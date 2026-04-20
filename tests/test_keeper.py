@@ -267,7 +267,6 @@ class KeeperTest(unittest.TestCase):
                 ("pause",),
             ],
         )
-        self.assertTrue(snapshot["suppressed"])
         self.assertEqual(snapshot["manual_mode"], "suppress")
         self.assertTrue(snapshot["manual_until"] is not None)
 
@@ -324,7 +323,6 @@ def build_keeper(cast, pushcut=None, state_store=None, clock=None):
         state_store=state_store or InMemoryStateStore(),
         pushcut_client=pushcut or FakePushcut(),
         clock=clock or SequenceClock([100.0] * 20),
-        sleep=lambda _seconds: None,
     )
 
 
