@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .cast import PyChromecastClient
 from .config import AppConfig, load_config
-from .monitor import WhiteNoiseKeeper
+from .keeper import WhiteNoiseKeeper
 from .pushcut import PushcutClient
 from .state import StateStore
 
@@ -22,7 +22,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Path to TOML config file.",
     )
     action = parser.add_mutually_exclusive_group()
-    action.add_argument("--once", action="store_true", help="Run one monitor loop and exit.")
+    action.add_argument("--once", action="store_true", help="Run one keeper loop and exit.")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
     parser.add_argument(
         "--dry-run",
@@ -59,20 +59,20 @@ def main(argv: list[str] | None = None) -> int:
             or args.trigger_ipad_backup
             or args.stop_ipad_backup
         )
-        monitor = build_monitor(config, include_pushcut=include_pushcut)
+        keeper = build_keeper(config, include_pushcut=include_pushcut)
 
         if args.trigger_ipad_backup:
-            monitor.trigger_ipad_backup(dry_run=args.dry_run)
+            keeper.trigger_ipad_backup(dry_run=args.dry_run)
             return 0
         if args.stop_ipad_backup:
-            monitor.stop_ipad_backup(dry_run=args.dry_run)
+            keeper.stop_ipad_backup(dry_run=args.dry_run)
             return 0
         if args.once:
-            result = monitor.run_once()
+            result = keeper.run_once()
             logging.getLogger(__name__).info(result.message)
             return 0 if result.healthy else 1
 
-        monitor.run_forever()
+        keeper.run_forever()
         return 0
     except KeyboardInterrupt:
         return 130
@@ -81,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
-def build_monitor(config: AppConfig, include_pushcut: bool | None = None) -> WhiteNoiseKeeper:
+def build_keeper(config: AppConfig, include_pushcut: bool | None = None) -> WhiteNoiseKeeper:
     if include_pushcut is None:
         include_pushcut = config.ipad_backup.enabled
 
