@@ -1,32 +1,37 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 
 from .cast import CastClient, CastState, expected_media_loaded
 
 LOG = logging.getLogger(__name__)
 MEDIA_END_RELOAD_THRESHOLD_SECONDS = 60.0
-MIN_RESTORED_VOLUME_LEVEL = 0.80
+MUTE_AFTER_LOAD_DELAY_SECONDS = 1.0
 
 
 class AudioLoadGuard:
-    def __init__(self, cast: CastClient):
+    def __init__(self, cast: CastClient, sleep: Callable[[float], None] = time.sleep):
         self.cast = cast
+        self.sleep = sleep
         self._pending_restore = False
-        self._pending_volume_level: float | None = None
 
     def load(self, state: CastState, autoplay: bool) -> None:
         self._pending_restore = True
-        self._pending_volume_level = _restorable_volume_level(state.volume_level)
         try:
             LOG.info(
                 "Muting Chromecast for load; current volume is %s; current media: %s",
-                _format_optional_volume(self._pending_volume_level),
+                _format_optional_volume(state.volume_level),
                 _format_current_media(state),
             )
             self.cast.set_muted(True)
             self.cast.load(autoplay=autoplay)
+            LOG.info(
+                "Waiting %.1fs after load before unmuting to avoid Nest beep.",
+                MUTE_AFTER_LOAD_DELAY_SECONDS,
+            )
+            self.sleep(MUTE_AFTER_LOAD_DELAY_SECONDS)
             self._restore()
             self._clear_pending()
         except Exception:
@@ -43,12 +48,6 @@ class AudioLoadGuard:
         return True
 
     def _restore(self) -> None:
-        if self._pending_volume_level is not None:
-            LOG.info(
-                "Restoring Chromecast volume to %.2f",
-                self._pending_volume_level,
-            )
-            self.cast.set_volume_level(self._pending_volume_level)
         LOG.info("Restoring Chromecast muted state to False")
         self.cast.set_muted(False)
 
@@ -72,7 +71,6 @@ class AudioLoadGuard:
 
     def _clear_pending(self) -> None:
         self._pending_restore = False
-        self._pending_volume_level = None
 
 
 class WhiteNoisePlayback:
@@ -164,9 +162,3 @@ def _format_current_media(state: CastState) -> str:
     if state.player_state is None:
         return state.content_id
     return f"{state.content_id} ({state.player_state})"
-
-
-def _restorable_volume_level(volume: float | None) -> float | None:
-    if volume == 0:
-        return MIN_RESTORED_VOLUME_LEVEL
-    return volume

@@ -1,7 +1,11 @@
 import unittest
 
 from white_noise_keeper.cast import CastState, PLAYER_PAUSED, PLAYER_PLAYING
-from white_noise_keeper.playback import WhiteNoisePlayback, _format_current_media
+from white_noise_keeper.playback import (
+    MUTE_AFTER_LOAD_DELAY_SECONDS,
+    WhiteNoisePlayback,
+    _format_current_media,
+)
 
 
 EXPECTED_URL = "http://example.local/white-noise.mp4"
@@ -12,7 +16,6 @@ class FakeCast:
         self,
         state=None,
         fail_load=False,
-        fail_restore_volume=False,
         fail_restore_mute=False,
     ):
         self.state = state or cast_state(
@@ -20,7 +23,6 @@ class FakeCast:
             player_state=PLAYER_PLAYING,
         )
         self.fail_load = fail_load
-        self.fail_restore_volume = fail_restore_volume
         self.fail_restore_mute = fail_restore_mute
         self.actions = []
 
@@ -74,17 +76,6 @@ class FakeCast:
             player_state=self.state.player_state,
             volume_muted=muted,
             volume_level=self.state.volume_level,
-        )
-
-    def set_volume_level(self, level):
-        self.actions.append(("set_volume_level", level))
-        if self.fail_restore_volume:
-            raise RuntimeError("volume restore failed")
-        self.state = cast_state(
-            content_id=self.state.content_id,
-            player_state=self.state.player_state,
-            volume_muted=self.state.volume_muted,
-            volume_level=level,
         )
 
     def close(self):
@@ -185,35 +176,23 @@ class PlaybackTest(unittest.TestCase):
 
         playback.ensure_loaded(autoplay=False)
 
-        self.assertEqual(cast.actions, muted_load_actions(autoplay=True, volume=None))
+        self.assertEqual(cast.actions, muted_load_actions(autoplay=True))
         self.assertIsNone(cast.state.volume_level)
-
-    def test_load_restores_zero_volume_as_audible_default(self):
-        cast = FakeCast(
-            cast_state(
-                content_id="http://example.local/other.mp4",
-                volume_level=0.0,
-            )
-        )
-        playback = build_playback(cast)
-
-        playback.ensure_loaded(autoplay=False)
-
-        self.assertEqual(cast.actions, muted_load_actions(autoplay=False, volume=0.80))
-        self.assertEqual(cast.state.volume_level, 0.80)
 
     def test_load_failure_attempts_audio_restore_and_reraises_original_exception(self):
         cast = FakeCast(
             cast_state(content_id="http://example.local/other.mp4"),
             fail_load=True,
-            fail_restore_volume=True,
         )
         playback = build_playback(cast)
 
         with self.assertRaisesRegex(RuntimeError, "load failed"):
             playback.load_from_beginning_paused()
 
-        self.assertEqual(cast.actions, muted_load_actions(autoplay=False))
+        self.assertEqual(
+            cast.actions,
+            [("set_muted", True), ("load", False), ("set_muted", False)],
+        )
 
     def test_pause_at_beginning_seeks_then_pauses_loaded_media(self):
         cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PLAYING))
@@ -231,27 +210,6 @@ class PlaybackTest(unittest.TestCase):
         playback.pause_at_beginning()
 
         self.assertEqual(cast.actions, [])
-
-    def test_restore_volume_failure_still_attempts_unmute_and_reraises(self):
-        cast = FakeCast(
-            cast_state(content_id="http://example.local/other.mp4"),
-            fail_restore_volume=True,
-        )
-        playback = build_playback(cast)
-
-        with self.assertRaisesRegex(RuntimeError, "volume restore failed"):
-            playback.load_from_beginning_paused()
-
-        self.assertEqual(
-            cast.actions,
-            [
-                ("set_muted", True),
-                ("load", False),
-                ("set_volume_level", 0.77),
-                ("set_volume_level", 0.77),
-                ("set_muted", False),
-            ],
-        )
 
     def test_failed_audio_restore_is_retried_before_next_load(self):
         cast = FakeCast(
@@ -274,11 +232,10 @@ class PlaybackTest(unittest.TestCase):
         self.assertEqual(
             cast.actions,
             [
-                ("set_volume_level", 0.77),
                 ("set_muted", False),
                 ("set_muted", True),
                 ("load", False),
-                ("set_volume_level", 0.77),
+                ("sleep", MUTE_AFTER_LOAD_DELAY_SECONDS),
                 ("set_muted", False),
             ],
         )
@@ -306,7 +263,11 @@ class PlaybackTest(unittest.TestCase):
 
 
 def build_playback(cast):
-    return WhiteNoisePlayback(cast, EXPECTED_URL)
+    playback = WhiteNoisePlayback(cast, EXPECTED_URL)
+    playback.audio_load_guard.sleep = lambda seconds: cast.actions.append(
+        ("sleep", seconds)
+    )
+    return playback
 
 
 def cast_state(
@@ -327,12 +288,13 @@ def cast_state(
     )
 
 
-def muted_load_actions(autoplay, volume=0.77):
-    actions = [("set_muted", True), ("load", autoplay)]
-    if volume is not None:
-        actions.append(("set_volume_level", volume))
-    actions.append(("set_muted", False))
-    return actions
+def muted_load_actions(autoplay):
+    return [
+        ("set_muted", True),
+        ("load", autoplay),
+        ("sleep", MUTE_AFTER_LOAD_DELAY_SECONDS),
+        ("set_muted", False),
+    ]
 
 
 if __name__ == "__main__":

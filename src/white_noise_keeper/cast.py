@@ -11,7 +11,6 @@ from .config import CastConfig
 LOG = logging.getLogger(__name__)
 VOLUME_CONFIRM_TIMEOUT_SECONDS = 2.0
 VOLUME_CONFIRM_INTERVAL_SECONDS = 0.05
-VOLUME_LEVEL_TOLERANCE = 0.01
 MEDIA_LOAD_CONFIRM_TIMEOUT_SECONDS = 10.0
 MEDIA_LOAD_CONFIRM_INTERVAL_SECONDS = 0.1
 
@@ -53,9 +52,6 @@ class CastClient(Protocol):
         ...
 
     def set_muted(self, muted: bool) -> None:
-        ...
-
-    def set_volume_level(self, level: float) -> None:
         ...
 
     def close(self) -> None:
@@ -133,12 +129,12 @@ class PyChromecastClient:
         self._require_cast().media_controller.play()
 
     def pause(self) -> None:
-        LOG.info("Pausing media")
+        LOG.debug("Pausing media")
         self._require_cast().media_controller.pause()
         LOG.info("Media paused")
 
     def seek_to_start(self) -> None:
-        LOG.info("Seeking media to start")
+        LOG.debug("Seeking media to start")
         self._require_cast().media_controller.seek(0)
         LOG.info("Media seeked to start")
 
@@ -147,13 +143,6 @@ class PyChromecastClient:
         cast.set_volume_muted(muted)
         _wait_for_volume_muted(cast, muted)
         LOG.info("Muted state is %s", muted)
-
-    def set_volume_level(self, level: float) -> None:
-        LOG.info("Setting volume level to %.2f", level)
-        cast = self._require_cast()
-        requested_level = cast.set_volume(level)
-        _wait_for_volume_level(cast, requested_level)
-        LOG.info("Volume confirmed at %.2f", requested_level)
 
     def close(self) -> None:
         if self._browser is not None:
@@ -203,20 +192,6 @@ def _refresh_media_status(media, timeout: float = 2.0) -> bool:
     return True
 
 
-def _wait_for_volume_level(cast, expected_level: float) -> None:
-    _wait_until(
-        read=lambda: _optional_float(getattr(cast.status, "volume_level", None)),
-        matches=lambda level: _volume_level_matches(level, expected_level),
-        refresh=lambda: _refresh_receiver_status(cast),
-        timeout=VOLUME_CONFIRM_TIMEOUT_SECONDS,
-        interval=VOLUME_CONFIRM_INTERVAL_SECONDS,
-        timeout_message=lambda level: (
-            "Chromecast volume did not reach "
-            f"{expected_level:.2f}; last reported volume was {level}"
-        ),
-    )
-
-
 def _wait_for_volume_muted(cast, expected_muted: bool) -> None:
     _wait_until(
         read=lambda: getattr(cast.status, "volume_muted", None),
@@ -261,11 +236,6 @@ def _wait_until(*, read, matches, refresh, timeout, interval, timeout_message) -
         time.sleep(interval)
 
     raise TimeoutError(timeout_message(last_value))
-
-
-def _volume_level_matches(actual: float | None, expected: float) -> bool:
-    return actual is not None and abs(actual - expected) <= VOLUME_LEVEL_TOLERANCE
-
 
 def _refresh_receiver_status(cast) -> None:
     receiver = getattr(getattr(cast, "socket_client", None), "receiver_controller", None)

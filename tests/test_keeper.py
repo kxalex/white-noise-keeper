@@ -93,15 +93,6 @@ class FakeCast:
             volume_level=self.state.volume_level,
         )
 
-    def set_volume_level(self, level):
-        self.actions.append(("set_volume_level", level))
-        self.state = cast_state(
-            content_id=self.state.content_id,
-            player_state=self.state.player_state,
-            volume_muted=self.state.volume_muted,
-            volume_level=level,
-        )
-
     def close(self):
         self.actions.append(("close",))
 
