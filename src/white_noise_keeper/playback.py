@@ -18,11 +18,11 @@ class AudioLoadGuard:
 
     def load(self, state: CastState, autoplay: bool) -> None:
         self._pending_restore = True
-        self._pending_volume_level = _volume_restore_level(state.volume_level)
+        self._pending_volume_level = _restorable_volume_level(state.volume_level)
         try:
             LOG.info(
                 "Temporarily muting Chromecast for load; current volume is %s",
-                _format_optional_volume(state.volume_level),
+                _format_optional_volume(self._pending_volume_level),
             )
             self.cast.set_muted(True)
             self.cast.load(autoplay=autoplay)
@@ -146,7 +146,7 @@ def _format_optional_volume(volume: float | None) -> str:
     return f"{volume:.2f}"
 
 
-def _volume_restore_level(volume: float | None) -> float | None:
+def _restorable_volume_level(volume: float | None) -> float | None:
     if volume == 0:
         return MIN_RESTORED_VOLUME_LEVEL
-    return None
+    return volume
