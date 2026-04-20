@@ -77,6 +77,28 @@ class CastVolumeTest(unittest.TestCase):
 
 
 class CastMediaTest(unittest.TestCase):
+    def test_pause_uses_media_controller_pause(self):
+        media = FakeMediaController("http://example.local/white-noise.mp4")
+        client = PyChromecastClient(
+            CastConfig(name="Example", url="http://example.local/white-noise.mp4")
+        )
+        client._cast = SimpleNamespace(media_controller=media)
+
+        client.pause()
+
+        self.assertEqual(media.actions, [("pause",)])
+
+    def test_seek_to_start_uses_media_controller_seek_zero(self):
+        media = FakeMediaController("http://example.local/white-noise.mp4")
+        client = PyChromecastClient(
+            CastConfig(name="Example", url="http://example.local/white-noise.mp4")
+        )
+        client._cast = SimpleNamespace(media_controller=media)
+
+        client.seek_to_start()
+
+        self.assertEqual(media.actions, [("seek", 0)])
+
     def test_load_waits_until_expected_media_is_reported(self):
         url = "http://example.local/white-noise.mp4"
         media = FakeMediaController(url)
@@ -176,6 +198,12 @@ class FakeMediaController:
 
     def block_until_active(self, timeout):
         self.actions.append(("block_until_active", timeout))
+
+    def pause(self):
+        self.actions.append(("pause",))
+
+    def seek(self, position):
+        self.actions.append(("seek", position))
 
     def update_status(self, callback_function=None):
         self.actions.append(("update_status",))

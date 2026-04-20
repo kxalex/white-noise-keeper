@@ -132,7 +132,7 @@ class WhiteNoiseKeeper:
         with self._lock:
             self.state.force_start_until = None
             self.state.auto_start_suppressed = True
-            self.playback.load_from_beginning_paused()
+            self.playback.pause_at_beginning()
             self._record_command("stop")
             self.state_store.save(self.state)
             return self.status_snapshot()

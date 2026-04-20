@@ -123,6 +123,17 @@ class WhiteNoisePlayback:
         self.audio_load_guard.load(state, autoplay=False)
         self._get_state()
 
+    def pause_at_beginning(self) -> None:
+        state = self._get_state()
+        if state.content_id is None:
+            LOG.info("No media is loaded; nothing to pause")
+            return
+
+        LOG.info("Pausing media at beginning: %s", _format_current_media(state))
+        self.cast.seek_to_start()
+        self.cast.pause()
+        self._get_state()
+
     def is_expected_playing(self, state: CastState) -> bool:
         return expected_media_loaded(state, self.expected_url) and state.playing
 

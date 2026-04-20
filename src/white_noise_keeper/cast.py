@@ -46,6 +46,12 @@ class CastClient(Protocol):
     def play(self) -> None:
         ...
 
+    def pause(self) -> None:
+        ...
+
+    def seek_to_start(self) -> None:
+        ...
+
     def set_muted(self, muted: bool) -> None:
         ...
 
@@ -125,6 +131,16 @@ class PyChromecastClient:
 
     def play(self) -> None:
         self._require_cast().media_controller.play()
+
+    def pause(self) -> None:
+        LOG.info("Pausing media")
+        self._require_cast().media_controller.pause()
+        LOG.info("Media paused")
+
+    def seek_to_start(self) -> None:
+        LOG.info("Seeking media to start")
+        self._require_cast().media_controller.seek(0)
+        LOG.info("Media seeked to start")
 
     def set_muted(self, muted: bool) -> None:
         cast = self._require_cast()

@@ -47,6 +47,24 @@ class FakeCast:
             volume_level=self.state.volume_level,
         )
 
+    def pause(self):
+        self.actions.append(("pause",))
+        self.state = cast_state(
+            content_id=self.state.content_id,
+            player_state=PLAYER_PAUSED,
+            volume_muted=self.state.volume_muted,
+            volume_level=self.state.volume_level,
+        )
+
+    def seek_to_start(self):
+        self.actions.append(("seek_to_start",))
+        self.state = cast_state(
+            content_id=self.state.content_id,
+            player_state=self.state.player_state,
+            volume_muted=self.state.volume_muted,
+            volume_level=self.state.volume_level,
+        )
+
     def set_muted(self, muted):
         self.actions.append(("set_muted", muted))
         if self.fail_restore_mute and muted is False:
@@ -196,6 +214,23 @@ class PlaybackTest(unittest.TestCase):
             playback.load_from_beginning_paused()
 
         self.assertEqual(cast.actions, muted_load_actions(autoplay=False))
+
+    def test_pause_at_beginning_seeks_then_pauses_loaded_media(self):
+        cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PLAYING))
+        playback = build_playback(cast)
+
+        playback.pause_at_beginning()
+
+        self.assertEqual(cast.actions, [("seek_to_start",), ("pause",)])
+        self.assertEqual(cast.state.player_state, PLAYER_PAUSED)
+
+    def test_pause_at_beginning_does_nothing_when_no_media_loaded(self):
+        cast = FakeCast(cast_state(content_id=None, player_state=None))
+        playback = build_playback(cast)
+
+        playback.pause_at_beginning()
+
+        self.assertEqual(cast.actions, [])
 
     def test_restore_volume_failure_still_attempts_unmute_and_reraises(self):
         cast = FakeCast(

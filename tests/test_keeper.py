@@ -66,6 +66,24 @@ class FakeCast:
             volume_level=self.state.volume_level,
         )
 
+    def pause(self):
+        self.actions.append(("pause",))
+        self.state = cast_state(
+            content_id=self.state.content_id,
+            player_state=PLAYER_PAUSED,
+            volume_muted=self.state.volume_muted,
+            volume_level=self.state.volume_level,
+        )
+
+    def seek_to_start(self):
+        self.actions.append(("seek_to_start",))
+        self.state = cast_state(
+            content_id=self.state.content_id,
+            player_state=self.state.player_state,
+            volume_muted=self.state.volume_muted,
+            volume_level=self.state.volume_level,
+        )
+
     def set_muted(self, muted):
         self.actions.append(("set_muted", muted))
         self.state = cast_state(
@@ -234,10 +252,8 @@ class KeeperTest(unittest.TestCase):
         self.assertEqual(
             cast.actions,
             [
-                ("set_muted", True),
-                ("load", False),
-                ("set_volume_level", 0.77),
-                ("set_muted", False),
+                ("seek_to_start",),
+                ("pause",),
             ],
         )
         self.assertTrue(snapshot["suppressed"])
