@@ -6,16 +6,16 @@ from white_noise_keeper.state import RuntimeState, StateStore
 
 
 class StateStoreTest(unittest.TestCase):
-    def test_manual_mode_round_trips(self):
+    def test_force_state_round_trips(self):
         with tempfile.TemporaryDirectory() as directory:
             state_path = Path(directory) / "state.json"
             store = StateStore(state_path)
 
-            store.save(RuntimeState(manual_mode="suppress", manual_until=123.0))
+            store.save(RuntimeState(force_enabled=True, last_active_window=False))
             state = store.load()
 
-        self.assertEqual(state.manual_mode, "suppress")
-        self.assertEqual(state.manual_until, 123.0)
+        self.assertTrue(state.force_enabled)
+        self.assertFalse(state.last_active_window)
 
 
 if __name__ == "__main__":

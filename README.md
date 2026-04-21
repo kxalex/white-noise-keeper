@@ -126,13 +126,13 @@ Start white noise once:
 curl -X POST http://<pi-ip>:8765/v1/actions/start
 ```
 
-Start and keep white noise running until `stop` or the configured end time:
+Start and keep white noise running until `stop` or the active window ends:
 
 ```sh
 curl -X POST http://<pi-ip>:8765/v1/actions/start-force
 ```
 
-Stop white noise and suppress automatic restart until the next active window:
+Stop white noise by pausing and rewinding it. You can start it again from the Nest or API:
 
 ```sh
 curl -X POST http://<pi-ip>:8765/v1/actions/stop

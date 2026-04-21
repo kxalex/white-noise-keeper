@@ -117,6 +117,8 @@ class KeeperTest(unittest.TestCase):
         result = keeper.run_once(active_datetime())
 
         self.assertTrue(result.healthy)
+        self.assertTrue(keeper.state.force_enabled)
+        self.assertTrue(keeper.state.last_active_window)
         self.assertIn(("play",), cast.actions)
 
     def test_outside_window_does_not_enforce_playback_when_expected_media_is_paused(self):
@@ -187,7 +189,7 @@ class KeeperTest(unittest.TestCase):
         self.assertEqual(pushcut.stop_calls, 0)
         self.assertEqual(keeper.state.nest_recovered_started_at, 700.0)
 
-    def test_ipad_backup_stops_immediately_when_active_window_ends(self):
+    def test_ipad_backup_stops_outside_active_window(self):
         cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED))
         pushcut = FakePushcut()
         state_store = InMemoryStateStore(RuntimeState(ipad_backup_active=True))
@@ -220,46 +222,23 @@ class KeeperTest(unittest.TestCase):
         self.assertFalse(keeper.run_once(active_datetime()).healthy)
         self.assertEqual(pushcut.play_calls, 0)
 
-    def test_force_start_expires_after_until_timestamp(self):
-        cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED))
-        keeper = build_keeper(cast=cast, clock=SequenceClock([1001.0]))
-        keeper.state.manual_mode = "force"
-        keeper.state.manual_until = 1000.0
+    def test_active_window_end_disables_force_and_pauses(self):
+        cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PLAYING))
+        pushcut = FakePushcut()
+        state_store = InMemoryStateStore(
+            RuntimeState(
+                force_enabled=True,
+                last_active_window=True,
+                ipad_backup_active=True,
+            )
+        )
+        keeper = build_keeper(cast=cast, pushcut=pushcut, state_store=state_store)
 
         result = keeper.run_once(outside_datetime())
 
         self.assertTrue(result.healthy)
-        self.assertIsNone(keeper.state.manual_mode)
-        self.assertIsNone(keeper.state.manual_until)
-        self.assertNotIn(("play",), cast.actions)
-
-    def test_stop_suppresses_until_next_active_window_and_is_cleared_by_expiry(self):
-        cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED))
-        keeper = build_keeper(cast=cast, clock=SequenceClock([100.0, 201.0]))
-        keeper.state.manual_mode = "suppress"
-        keeper.state.manual_until = 200.0
-
-        first = keeper.run_once(active_datetime())
-        self.assertTrue(first.healthy)
-        self.assertEqual(cast.actions, [])
-        self.assertEqual(first.message, "Nest auto-start is suppressed")
-
-        second = keeper.run_once(active_datetime())
-        self.assertTrue(second.healthy)
-        self.assertIn(("play",), cast.actions)
-        self.assertIsNone(keeper.state.manual_mode)
-        self.assertIsNone(keeper.state.manual_until)
-
-    def test_stop_sets_suppression_until_next_active_window(self):
-        cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PLAYING))
-        keeper = build_keeper(cast=cast, clock=SequenceClock([100.0] * 10))
-        keeper.state.manual_mode = "force"
-        keeper.state.manual_until = 999999.0
-
-        snapshot = keeper.command_stop()
-
-        self.assertEqual(keeper.state.manual_mode, "suppress")
-        self.assertIsNotNone(keeper.state.manual_until)
+        self.assertFalse(keeper.state.force_enabled)
+        self.assertFalse(keeper.state.last_active_window)
         self.assertEqual(
             cast.actions,
             [
@@ -267,19 +246,44 @@ class KeeperTest(unittest.TestCase):
                 ("pause",),
             ],
         )
-        self.assertEqual(snapshot["manual_mode"], "suppress")
-        self.assertTrue(snapshot["manual_until"] is not None)
+        self.assertEqual(pushcut.stop_calls, 1)
+        self.assertFalse(keeper.state.ipad_backup_active)
 
-    def test_start_clears_suppression_plays_once_then_respects_manual_pause(self):
+    def test_stop_inside_active_window_disables_force_and_respects_nest_tap(self):
+        cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PLAYING))
+        keeper = build_keeper(cast=cast)
+        keeper.state.force_enabled = True
+        keeper._active_window = lambda now: True
+
+        snapshot = keeper.command_stop()
+
+        self.assertFalse(keeper.state.force_enabled)
+        self.assertTrue(keeper.state.last_active_window)
+        self.assertFalse(snapshot["force_enabled"])
+        self.assertEqual(
+            cast.actions,
+            [
+                ("seek_to_start",),
+                ("pause",),
+            ],
+        )
+
+        cast.actions.clear()
+        cast.state = cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PLAYING)
+        result = keeper.run_once(active_datetime())
+
+        self.assertTrue(result.healthy)
+        self.assertEqual(cast.actions, [])
+
+    def test_start_plays_once_and_later_manual_pause_is_respected(self):
         cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED))
         keeper = build_keeper(cast=cast)
-        keeper.state.manual_mode = "suppress"
-        keeper.state.manual_until = 999999.0
+        keeper.state.force_enabled = True
+        keeper._active_window = lambda now: False
 
         snapshot = keeper.command_start()
 
-        self.assertIsNone(keeper.state.manual_mode)
-        self.assertIsNone(keeper.state.manual_until)
+        self.assertFalse(keeper.state.force_enabled)
         self.assertEqual(snapshot["last_command"]["action"], "start")
         self.assertIn(("play",), cast.actions)
 
@@ -290,17 +294,31 @@ class KeeperTest(unittest.TestCase):
         self.assertTrue(result.healthy)
         self.assertEqual(cast.actions, [])
 
-    def test_start_force_replays_after_manual_pause_until_active_window_end(self):
+    def test_start_force_replays_after_manual_pause_until_stop(self):
         cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED))
         keeper = build_keeper(cast=cast, clock=SequenceClock([100.0] * 10))
 
         keeper.command_start_force()
+        self.assertTrue(keeper.state.force_enabled)
+
         cast.actions.clear()
         cast.state = cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED)
         result = keeper.run_once(outside_datetime())
 
         self.assertTrue(result.healthy)
         self.assertIn(("play",), cast.actions)
+
+        keeper.command_stop()
+        self.assertFalse(keeper.state.force_enabled)
+
+    def test_wrong_media_outside_window_loads_white_noise_paused(self):
+        cast = FakeCast(cast_state(content_id="http://example.local/other.mp3"))
+        keeper = build_keeper(cast=cast)
+
+        result = keeper.run_once(outside_datetime())
+
+        self.assertTrue(result.healthy)
+        self.assertIn(("load", False), cast.actions)
 
 
 def build_keeper(cast, pushcut=None, state_store=None, clock=None):

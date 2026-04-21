@@ -14,8 +14,8 @@ class RuntimeState:
     last_ipad_play_triggered_at: float | None = None
     nest_failure_started_at: float | None = None
     nest_recovered_started_at: float | None = None
-    manual_mode: str | None = None
-    manual_until: float | None = None
+    force_enabled: bool = False
+    last_active_window: bool | None = None
     last_command: dict | None = None
     last_cast_state: dict | None = None
 
@@ -42,8 +42,8 @@ class StateStore:
             nest_recovered_started_at=_optional_float(
                 data.get("nest_recovered_started_at")
             ),
-            manual_mode=_optional_str(data.get("manual_mode")),
-            manual_until=_optional_float(data.get("manual_until")),
+            force_enabled=_optional_bool(data.get("force_enabled")) or False,
+            last_active_window=_optional_bool(data.get("last_active_window")),
             last_command=_optional_dict(data.get("last_command")),
             last_cast_state=_optional_dict(data.get("last_cast_state")),
         )
@@ -56,8 +56,8 @@ class StateStore:
             "last_ipad_play_triggered_at": state.last_ipad_play_triggered_at,
             "nest_failure_started_at": state.nest_failure_started_at,
             "nest_recovered_started_at": state.nest_recovered_started_at,
-            "manual_mode": state.manual_mode,
-            "manual_until": state.manual_until,
+            "force_enabled": state.force_enabled,
+            "last_active_window": state.last_active_window,
             "last_command": state.last_command,
             "last_cast_state": state.last_cast_state,
         }
@@ -73,10 +73,10 @@ def _optional_float(value):
     return float(value)
 
 
-def _optional_str(value):
+def _optional_bool(value):
     if value is None:
         return None
-    if isinstance(value, str):
+    if isinstance(value, bool):
         return value
     return None
 

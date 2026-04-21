@@ -4,7 +4,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from .cast import CastClient, CastState
 from .config import AppConfig
@@ -71,15 +71,14 @@ class WhiteNoiseKeeper:
             now = now or datetime.now().astimezone()
             timestamp = self.clock()
             active = self._active_window(now)
-            self._expire_manual_override(timestamp)
-            manual_mode = self.state.manual_mode
+            active_window_ended = self._update_active_window_state(active)
 
             try:
-                if manual_mode == "suppress":
-                    return self._run_suppressed_window(active_window=active)
-                if manual_mode == "force" or active:
-                    return self._run_active_window(timestamp, active_window=active)
-                return self._run_outside_window(active_window=active)
+                if active_window_ended:
+                    return self._run_active_window_end(active_window=active)
+                if self.state.force_enabled:
+                    return self._run_forced_playback(timestamp, active_window=active)
+                return self._run_loaded_only(active_window=active)
             finally:
                 self.state_store.save(self.state)
 
@@ -106,8 +105,9 @@ class WhiteNoiseKeeper:
 
     def command_start(self) -> dict:
         with self._lock:
-            self.state.manual_mode = None
-            self.state.manual_until = None
+            now = datetime.now().astimezone()
+            self.state.force_enabled = False
+            self.state.last_active_window = self._active_window(now)
             self.playback.ensure_playing()
             self._record_command("start")
             self.state_store.save(self.state)
@@ -116,8 +116,8 @@ class WhiteNoiseKeeper:
     def command_start_force(self) -> dict:
         with self._lock:
             now = datetime.now().astimezone()
-            self.state.manual_mode = "force"
-            self.state.manual_until = self._next_active_end(now).timestamp()
+            self.state.force_enabled = True
+            self.state.last_active_window = self._active_window(now)
             self.playback.ensure_playing()
             self._record_command("start-force")
             self.state_store.save(self.state)
@@ -126,8 +126,8 @@ class WhiteNoiseKeeper:
     def command_stop(self) -> dict:
         with self._lock:
             now = datetime.now().astimezone()
-            self.state.manual_mode = "suppress"
-            self.state.manual_until = self._next_active_start(now).timestamp()
+            self.state.force_enabled = False
+            self.state.last_active_window = self._active_window(now)
             self.playback.pause_at_beginning()
             self._record_command("stop")
             self.state_store.save(self.state)
@@ -136,15 +136,11 @@ class WhiteNoiseKeeper:
     def status_snapshot(self) -> dict:
         with self._lock:
             now = datetime.now().astimezone()
-            timestamp = self.clock()
             active = self._active_window(now)
-            self._expire_manual_override(timestamp)
-            self.state_store.save(self.state)
             return {
                 "ok": True,
                 "active_window": active,
-                "manual_mode": self.state.manual_mode,
-                "manual_until": self.state.manual_until,
+                "force_enabled": self.state.force_enabled,
                 "schedule": {
                     "active_start": self.config.schedule.active_start,
                     "active_end": self.config.schedule.active_end,
@@ -153,7 +149,7 @@ class WhiteNoiseKeeper:
                 "last_cast_state": self.state.last_cast_state,
             }
 
-    def _run_active_window(self, timestamp: float, active_window: bool) -> KeeperResult:
+    def _run_forced_playback(self, timestamp: float, active_window: bool) -> KeeperResult:
         try:
             cast_state = self.playback.ensure_playing()
         except Exception as exc:
@@ -184,7 +180,7 @@ class WhiteNoiseKeeper:
             message="Nest is not playing expected media",
         )
 
-    def _run_outside_window(self, active_window: bool) -> KeeperResult:
+    def _run_loaded_only(self, active_window: bool) -> KeeperResult:
         try:
             self.playback.ensure_loaded(autoplay=False)
             healthy = True
@@ -207,23 +203,32 @@ class WhiteNoiseKeeper:
 
         return KeeperResult(healthy=healthy, active_window=active_window, message=message)
 
-    def _run_suppressed_window(self, active_window: bool) -> KeeperResult:
+    def _run_active_window_end(self, active_window: bool) -> KeeperResult:
+        healthy = True
+        message = "Active window ended; Nest paused"
+
         try:
-            self.playback.ensure_paused()
-            healthy = True
-            message = "Nest auto-start is suppressed"
+            self.playback.pause_at_beginning()
         except Exception as exc:
-            LOG.warning("Nest suppression attempt failed: %s", exc)
+            LOG.warning("Nest pause attempt after active window ended failed: %s", exc)
             healthy = False
-            message = f"Nest suppression failed: {exc}"
+            message = f"Nest pause after active window ended failed: {exc}"
+
+        if healthy:
+            try:
+                self.playback.ensure_loaded(autoplay=False)
+            except Exception as exc:
+                LOG.warning("Nest preload attempt after active window ended failed: %s", exc)
+                healthy = False
+                message = f"Nest preload after active window ended failed: {exc}"
 
         self.state.nest_failure_started_at = None
         self.state.nest_recovered_started_at = None
 
-        if not active_window and self.state.ipad_backup_active:
+        if self.state.ipad_backup_active:
             if self._stop_ipad_due_to_window_end():
-                message = "Active window ended; iPad backup stopped"
-                healthy = True
+                if healthy:
+                    message = "Active window ended; Nest paused and iPad backup stopped"
             else:
                 message = "Active window ended; iPad backup stop failed"
                 healthy = False
@@ -313,34 +318,27 @@ class WhiteNoiseKeeper:
             self.config.schedule.active_end_time,
         )
 
-    def _expire_manual_override(self, timestamp: float) -> None:
-        if self.state.manual_until is not None and timestamp >= self.state.manual_until:
-            self.state.manual_mode = None
-            self.state.manual_until = None
+    def _update_active_window_state(self, active: bool) -> bool:
+        previous = self.state.last_active_window
+        self.state.last_active_window = active
 
-    def _next_active_end(self, now: datetime) -> datetime:
-        end = self.config.schedule.active_end_time
-        candidate = now.replace(
-            hour=end.hour,
-            minute=end.minute,
-            second=0,
-            microsecond=0,
-        )
-        if candidate <= now:
-            candidate += timedelta(days=1)
-        return candidate
+        if previous is None:
+            if active:
+                LOG.info("Starting inside active window; enabling force mode")
+                self.state.force_enabled = True
+            return False
 
-    def _next_active_start(self, now: datetime) -> datetime:
-        start = self.config.schedule.active_start_time
-        candidate = now.replace(
-            hour=start.hour,
-            minute=start.minute,
-            second=0,
-            microsecond=0,
-        )
-        if candidate <= now:
-            candidate += timedelta(days=1)
-        return candidate
+        if previous == active:
+            return False
+
+        if active:
+            LOG.info("Active window started; enabling force mode")
+            self.state.force_enabled = True
+            return False
+
+        LOG.info("Active window ended; disabling force mode")
+        self.state.force_enabled = False
+        return True
 
     def _record_command(self, action: str) -> None:
         self.state.last_command = {
