@@ -53,6 +53,25 @@ class CastVolumeTest(unittest.TestCase):
                     _wait_for_volume_muted(cast, True)
 
 class CastMediaTest(unittest.TestCase):
+    def test_reset_closes_current_connection(self):
+        browser = SimpleNamespace(actions=[])
+
+        def stop_discovery():
+            browser.actions.append(("stop_discovery",))
+
+        browser.stop_discovery = stop_discovery
+        client = PyChromecastClient(
+            CastConfig(name="Example", url="http://example.local/white-noise.mp4")
+        )
+        client._cast = SimpleNamespace()
+        client._browser = browser
+
+        client.reset()
+
+        self.assertIsNone(client._cast)
+        self.assertIsNone(client._browser)
+        self.assertEqual(browser.actions, [("stop_discovery",)])
+
     def test_pause_uses_media_controller_pause(self):
         media = FakeMediaController("http://example.local/white-noise.mp4")
         client = PyChromecastClient(

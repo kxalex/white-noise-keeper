@@ -154,6 +154,7 @@ class WhiteNoiseKeeper:
             cast_state = self.playback.ensure_playing()
         except Exception as exc:
             LOG.warning("Nest recovery attempt failed: %s", exc)
+            self._reset_cast_after_stale_failure(exc)
             self._record_nest_failure(timestamp)
             self._maybe_trigger_ipad_backup(timestamp)
             return KeeperResult(
@@ -239,6 +240,15 @@ class WhiteNoiseKeeper:
         if self.state.nest_failure_started_at is None:
             self.state.nest_failure_started_at = timestamp
         self.state.nest_recovered_started_at = None
+
+    def _reset_cast_after_stale_failure(self, exc: Exception) -> None:
+        if not _looks_like_stale_cast_failure(exc):
+            return
+        LOG.info("Resetting Chromecast connection after stale failure: %s", exc)
+        try:
+            self.cast.reset()
+        except Exception as reset_exc:
+            LOG.warning("Could not reset Chromecast connection: %s", reset_exc)
 
     def _record_nest_healthy(self, timestamp: float) -> None:
         self.state.nest_failure_started_at = None
@@ -355,3 +365,16 @@ class WhiteNoiseKeeper:
             "volume_muted": state.volume_muted,
             "volume_level": state.volume_level,
         }
+
+
+def _looks_like_stale_cast_failure(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "is connecting",
+            "timed out",
+            "timeout",
+            "heartbeat timeout",
+        )
+    )

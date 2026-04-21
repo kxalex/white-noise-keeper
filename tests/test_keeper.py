@@ -42,9 +42,12 @@ class FakeCast:
         )
         self.fail = fail
         self.actions = []
+        self.reset_calls = 0
 
     def get_state(self):
         if self.fail:
+            if isinstance(self.fail, Exception):
+                raise self.fail
             raise RuntimeError("cast unavailable")
         return self.state
 
@@ -95,6 +98,10 @@ class FakeCast:
 
     def close(self):
         self.actions.append(("close",))
+
+    def reset(self):
+        self.actions.append(("reset",))
+        self.reset_calls += 1
 
 
 class FakePushcut:
@@ -222,6 +229,26 @@ class KeeperTest(unittest.TestCase):
         self.assertFalse(keeper.run_once(active_datetime()).healthy)
         self.assertEqual(pushcut.play_calls, 0)
 
+    def test_stale_cast_failure_resets_connection_once(self):
+        cast = FakeCast(fail=RuntimeError("Chromecast 192.0.2.10:8009 is connecting..."))
+        keeper = build_keeper(cast=cast)
+
+        result = keeper.run_once(active_datetime())
+
+        self.assertFalse(result.healthy)
+        self.assertEqual(cast.reset_calls, 1)
+        self.assertIn(("reset",), cast.actions)
+
+    def test_generic_cast_failure_does_not_reset_connection(self):
+        cast = FakeCast(fail=RuntimeError("cast unavailable"))
+        keeper = build_keeper(cast=cast)
+
+        result = keeper.run_once(active_datetime())
+
+        self.assertFalse(result.healthy)
+        self.assertEqual(cast.reset_calls, 0)
+        self.assertNotIn(("reset",), cast.actions)
+
     def test_active_window_end_disables_force_and_pauses(self):
         cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PLAYING))
         pushcut = FakePushcut()
@@ -297,6 +324,7 @@ class KeeperTest(unittest.TestCase):
     def test_start_force_replays_after_manual_pause_until_stop(self):
         cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED))
         keeper = build_keeper(cast=cast, clock=SequenceClock([100.0] * 10))
+        keeper._active_window = lambda now: False
 
         keeper.command_start_force()
         self.assertTrue(keeper.state.force_enabled)

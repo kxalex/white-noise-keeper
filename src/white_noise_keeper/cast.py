@@ -54,6 +54,9 @@ class CastClient(Protocol):
     def set_muted(self, muted: bool) -> None:
         ...
 
+    def reset(self) -> None:
+        ...
+
     def close(self) -> None:
         ...
 
@@ -154,6 +157,10 @@ class PyChromecastClient:
                 pychromecast.discovery.stop_discovery(self._browser)
         self._browser = None
         self._cast = None
+
+    def reset(self) -> None:
+        LOG.info("Resetting Chromecast connection")
+        self.close()
 
     def _require_cast(self):
         if self._cast is None:
