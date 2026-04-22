@@ -15,18 +15,23 @@ class FakeCast:
     def __init__(
         self,
         state=None,
+        fail_get_state_times=0,
         fail_load=False,
-        fail_restore_mute=False,
+        fail_set_muted_to=None,
     ):
         self.state = state or cast_state(
             content_id=EXPECTED_URL,
             player_state=PLAYER_PLAYING,
         )
+        self.fail_get_state_times = fail_get_state_times
         self.fail_load = fail_load
-        self.fail_restore_mute = fail_restore_mute
+        self.fail_set_muted_to = fail_set_muted_to
         self.actions = []
 
     def get_state(self):
+        if self.fail_get_state_times > 0:
+            self.fail_get_state_times -= 1
+            raise RuntimeError("cast unavailable")
         return self.state
 
     def load(self, autoplay):
@@ -69,7 +74,7 @@ class FakeCast:
 
     def set_muted(self, muted):
         self.actions.append(("set_muted", muted))
-        if self.fail_restore_mute and muted is False:
+        if self.fail_set_muted_to is not None and muted == self.fail_set_muted_to:
             raise RuntimeError("mute restore failed")
         self.state = cast_state(
             content_id=self.state.content_id,
@@ -194,6 +199,23 @@ class PlaybackTest(unittest.TestCase):
             [("set_muted", True), ("load", False), ("set_muted", False)],
         )
 
+    def test_failed_mute_restore_is_retried_before_next_load(self):
+        cast = FakeCast(cast_state(content_id="http://example.local/other.mp4"), fail_set_muted_to=False)
+        playback = build_playback(cast)
+
+        with self.assertRaisesRegex(RuntimeError, "mute restore failed"):
+            playback.ensure_loaded(autoplay=False)
+
+        self.assertTrue(cast.state.volume_muted)
+
+        cast.fail_set_muted_to = None
+        cast.actions.clear()
+
+        self.assertTrue(playback.ensure_loaded(autoplay=False))
+
+        self.assertEqual(cast.actions, [("set_muted", False)])
+        self.assertFalse(cast.state.volume_muted)
+
     def test_pause_at_beginning_seeks_then_pauses_loaded_media(self):
         cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PLAYING))
         playback = build_playback(cast)
@@ -203,6 +225,30 @@ class PlaybackTest(unittest.TestCase):
         self.assertEqual(cast.actions, [("seek_to_start",), ("pause",)])
         self.assertEqual(cast.state.player_state, PLAYER_PAUSED)
 
+    def test_restore_snapshot_preserves_muted_state(self):
+        cast = FakeCast(cast_state(content_id="http://example.local/other.mp4"))
+        playback = build_playback(cast)
+
+        restored = playback.restore_snapshot(
+            {
+                "content_id": EXPECTED_URL,
+                "player_state": PLAYER_PLAYING,
+                "volume_muted": True,
+            }
+        )
+
+        self.assertEqual(
+            cast.actions,
+            [
+                ("set_muted", True),
+                ("load", True),
+                ("sleep", MUTE_AFTER_LOAD_DELAY_SECONDS),
+                ("set_muted", True),
+            ],
+        )
+        self.assertTrue(restored.volume_muted)
+        self.assertEqual(restored.content_id, EXPECTED_URL)
+
     def test_pause_at_beginning_does_nothing_when_no_media_loaded(self):
         cast = FakeCast(cast_state(content_id=None, player_state=None))
         playback = build_playback(cast)
@@ -210,36 +256,6 @@ class PlaybackTest(unittest.TestCase):
         playback.pause_at_beginning()
 
         self.assertEqual(cast.actions, [])
-
-    def test_failed_audio_restore_is_retried_before_next_load(self):
-        cast = FakeCast(
-            cast_state(content_id="http://example.local/other.mp4"),
-            fail_load=True,
-            fail_restore_mute=True,
-        )
-        playback = build_playback(cast)
-
-        with self.assertRaisesRegex(RuntimeError, "load failed"):
-            playback.ensure_loaded(autoplay=False)
-
-        self.assertTrue(cast.state.volume_muted)
-
-        cast.fail_load = False
-        cast.fail_restore_mute = False
-        cast.actions.clear()
-        playback.ensure_loaded(autoplay=False)
-
-        self.assertEqual(
-            cast.actions,
-            [
-                ("set_muted", False),
-                ("set_muted", True),
-                ("load", False),
-                ("sleep", MUTE_AFTER_LOAD_DELAY_SECONDS),
-                ("set_muted", False),
-            ],
-        )
-        self.assertFalse(cast.state.volume_muted)
 
     def test_expected_media_not_near_end_is_not_reloaded(self):
         cast = FakeCast(cast_state(current_time=3539, duration=3600))
@@ -288,12 +304,12 @@ def cast_state(
     )
 
 
-def muted_load_actions(autoplay):
+def muted_load_actions(autoplay, muted=False):
     return [
         ("set_muted", True),
         ("load", autoplay),
         ("sleep", MUTE_AFTER_LOAD_DELAY_SECONDS),
-        ("set_muted", False),
+        ("set_muted", muted),
     ]
 
 

@@ -14,18 +14,12 @@ class FakeKeeper:
         self.calls.append("status")
         return {
             "ok": True,
-            "active_window": False,
-            "force_enabled": False,
             "last_cast_state": {"player_state": "PAUSED"},
         }
 
     def command_start(self):
         self.calls.append("start")
         return {"ok": True, "last_command": {"action": "start"}}
-
-    def command_start_force(self):
-        self.calls.append("start-force")
-        return {"ok": True, "last_command": {"action": "start-force"}}
 
     def command_stop(self):
         self.calls.append("stop")
@@ -50,7 +44,7 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(self.keeper.calls, ["status"])
 
     def test_action_endpoints_call_matching_keeper_commands(self):
-        actions = ["start", "start-force", "stop"]
+        actions = ["start", "stop"]
 
         for action in actions:
             response = self.post(f"/v1/actions/{action}")

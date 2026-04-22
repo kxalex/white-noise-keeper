@@ -4,7 +4,13 @@ import logging
 import time
 from collections.abc import Callable
 
-from .cast import CastClient, CastState, expected_media_loaded
+from .cast import (
+    CastClient,
+    CastState,
+    PLAYER_BUFFERING,
+    PLAYER_PLAYING,
+    expected_media_loaded,
+)
 
 LOG = logging.getLogger(__name__)
 MEDIA_END_RELOAD_THRESHOLD_SECONDS = 60.0
@@ -16,8 +22,12 @@ class AudioLoadGuard:
         self.cast = cast
         self.sleep = sleep
         self._pending_restore = False
+        self._target_muted = False
 
-    def load(self, state: CastState, autoplay: bool) -> None:
+    def load(self, state: CastState, autoplay: bool, muted: bool | None = None) -> None:
+        self._target_muted = _normalize_muted(
+            state.volume_muted if muted is None else muted
+        )
         self._pending_restore = True
         try:
             LOG.info(
@@ -32,7 +42,7 @@ class AudioLoadGuard:
                 MUTE_AFTER_LOAD_DELAY_SECONDS,
             )
             self.sleep(MUTE_AFTER_LOAD_DELAY_SECONDS)
-            self._restore()
+            self._restore_target_muted()
             self._clear_pending()
         except Exception:
             if self._restore_best_effort():
@@ -42,30 +52,39 @@ class AudioLoadGuard:
     def restore_pending(self) -> bool:
         if not self._pending_restore:
             return False
-        LOG.info("Restoring pending Chromecast audio state before next action")
-        self._restore()
+        LOG.info("Restoring pending Chromecast mute state before next action")
+        return self.restore_target_muted()
+
+    def has_pending_restore(self) -> bool:
+        return self._pending_restore
+
+    def restore_target_muted(self, muted: bool | None = None) -> bool:
+        if muted is not None:
+            self._target_muted = muted
+        self._pending_restore = True
+        try:
+            self._restore_target_muted()
+        except Exception as restore_exc:
+            LOG.warning(
+                "Failed to restore Chromecast mute state: %s",
+                restore_exc,
+            )
+            return False
         self._clear_pending()
         return True
 
-    def _restore(self) -> None:
-        LOG.info("Restoring Chromecast muted state to False")
-        self.cast.set_muted(False)
+    def _restore_target_muted(self) -> None:
+        LOG.info("Restoring Chromecast muted state to %s", self._target_muted)
+        self.cast.set_muted(self._target_muted)
 
     def _restore_best_effort(self) -> bool:
         try:
-            self._restore()
+            self._restore_target_muted()
         except Exception as restore_exc:
             LOG.warning(
-                "Failed to restore Chromecast audio state after failed load: %s",
+                "Failed to restore Chromecast mute state after failed load: %s",
                 restore_exc,
             )
-            try:
-                self.cast.set_muted(False)
-            except Exception as mute_restore_exc:
-                LOG.warning(
-                    "Failed to restore Chromecast muted state after failed load: %s",
-                    mute_restore_exc,
-                )
             return False
         return True
 
@@ -90,7 +109,10 @@ class WhiteNoisePlayback:
         if not state.playing:
             LOG.info("Expected media is loaded but not playing; sending play")
             self.cast.play()
-            return self._get_state()
+            state = self._get_state()
+        if state.volume_muted:
+            self.audio_load_guard.restore_target_muted(False)
+            state = self._get_state()
         return state
 
     def ensure_loaded(self, autoplay: bool) -> CastState:
@@ -104,7 +126,11 @@ class WhiteNoisePlayback:
                     LOG.info("Expected media is near the end; reloading and playing")
                 else:
                     LOG.info("Expected media is near the end; reloading paused")
-                self.audio_load_guard.load(state, autoplay=reload_autoplay)
+                self.audio_load_guard.load(
+                    state,
+                    autoplay=reload_autoplay,
+                    muted=state.volume_muted,
+                )
                 state = self._get_state()
             return state
 
@@ -112,7 +138,7 @@ class WhiteNoisePlayback:
             LOG.info("Expected media is not loaded; loading and playing")
         else:
             LOG.info("Expected media is not loaded; loading paused")
-        self.audio_load_guard.load(state, autoplay=autoplay)
+        self.audio_load_guard.load(state, autoplay=autoplay, muted=state.volume_muted)
         return self._get_state()
 
     def pause_at_beginning(self) -> None:
@@ -125,6 +151,44 @@ class WhiteNoisePlayback:
         self.cast.seek_to_start()
         self.cast.pause()
         self._get_state()
+
+    def restore_snapshot(self, snapshot: dict) -> CastState:
+        desired_url = snapshot.get("content_id")
+        desired_playing = snapshot.get("player_state") in {PLAYER_PLAYING, PLAYER_BUFFERING}
+        desired_muted = _normalize_muted(snapshot.get("volume_muted"))
+
+        state = self._get_state()
+        if desired_url is not None and state.content_id != desired_url:
+            self.audio_load_guard.load(
+                state,
+                autoplay=desired_playing,
+                muted=desired_muted,
+            )
+            state = self._get_state()
+
+        if desired_playing:
+            if not state.playing:
+                LOG.info("Restoring expected media to playing state")
+                self.cast.play()
+                state = self._get_state()
+        elif state.playing:
+            LOG.info("Restoring expected media to paused state")
+            self.pause_at_beginning()
+            state = self._get_state()
+
+        if state.volume_muted != desired_muted:
+            if not self.audio_load_guard.restore_target_muted(desired_muted):
+                raise RuntimeError("Chromecast mute restore failed")
+        return self._get_state()
+
+    def current_state(self) -> CastState:
+        return self._get_state()
+
+    def restore_pending(self) -> bool:
+        return self.audio_load_guard.restore_pending()
+
+    def has_pending_restore(self) -> bool:
+        return self.audio_load_guard.has_pending_restore()
 
     def is_expected_playing(self, state: CastState) -> bool:
         return expected_media_loaded(state, self.expected_url) and state.playing
@@ -156,3 +220,7 @@ def _format_current_media(state: CastState) -> str:
     if state.player_state is None:
         return state.content_id
     return f"{state.content_id} ({state.player_state})"
+
+
+def _normalize_muted(value: bool | None) -> bool:
+    return bool(value) if value is not None else False

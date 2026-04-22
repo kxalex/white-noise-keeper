@@ -9,7 +9,6 @@ from pathlib import Path
 from .cast import PyChromecastClient
 from .config import AppConfig, load_config
 from .keeper import WhiteNoiseKeeper
-from .pushcut import PushcutClient
 from .state import StateStore
 
 
@@ -25,24 +24,9 @@ def main(argv: list[str] | None = None) -> int:
     action.add_argument("--once", action="store_true", help="Run one keeper loop and exit.")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
     parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Validate CLI action without calling Pushcut.",
-    )
-    parser.add_argument(
         "--state-path",
         type=Path,
         help="Override runtime state path. Useful for local integration tests.",
-    )
-    action.add_argument(
-        "--trigger-ipad-backup",
-        action="store_true",
-        help="Trigger the configured Pushcut play URL and exit.",
-    )
-    action.add_argument(
-        "--stop-ipad-backup",
-        action="store_true",
-        help="Trigger the configured Pushcut stop URL and exit.",
     )
     args = parser.parse_args(argv)
 
@@ -54,19 +38,7 @@ def main(argv: list[str] | None = None) -> int:
                 config,
                 monitor=replace(config.monitor, state_path=args.state_path),
             )
-        include_pushcut = (
-            config.ipad_backup.enabled
-            or args.trigger_ipad_backup
-            or args.stop_ipad_backup
-        )
-        keeper = build_keeper(config, include_pushcut=include_pushcut)
-
-        if args.trigger_ipad_backup:
-            keeper.trigger_ipad_backup(dry_run=args.dry_run)
-            return 0
-        if args.stop_ipad_backup:
-            keeper.stop_ipad_backup(dry_run=args.dry_run)
-            return 0
+        keeper = build_keeper(config)
         if args.once:
             result = keeper.run_once()
             logging.getLogger(__name__).info(result.message)
@@ -81,21 +53,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
-def build_keeper(config: AppConfig, include_pushcut: bool | None = None) -> WhiteNoiseKeeper:
-    if include_pushcut is None:
-        include_pushcut = config.ipad_backup.enabled
-
-    pushcut = None
-    if include_pushcut:
-        pushcut = PushcutClient(
-            play_url=config.ipad_backup.play_url,
-            stop_url=config.ipad_backup.stop_url,
-        )
+def build_keeper(config: AppConfig) -> WhiteNoiseKeeper:
     return WhiteNoiseKeeper(
         config=config,
         cast_client=PyChromecastClient(config.cast),
         state_store=StateStore(config.monitor.state_path),
-        pushcut_client=pushcut,
     )
 
 

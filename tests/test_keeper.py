@@ -1,15 +1,10 @@
 import unittest
-from datetime import datetime
+
+import datetime
 
 from white_noise_keeper.cast import CastState, PLAYER_PAUSED, PLAYER_PLAYING
-from white_noise_keeper.config import (
-    AppConfig,
-    CastConfig,
-    IpadBackupConfig,
-    MonitorConfig,
-    ScheduleConfig,
-)
-from white_noise_keeper.keeper import WhiteNoiseKeeper
+from white_noise_keeper.config import AppConfig, CastConfig, HttpConfig, MonitorConfig
+from white_noise_keeper.keeper import WhiteNoiseKeeper, _retry_sleep_seconds
 from white_noise_keeper.state import RuntimeState
 
 
@@ -34,20 +29,20 @@ class FakeCast:
     def __init__(
         self,
         state=None,
-        fail=False,
+        fail_get_state_times=0,
+        fail_set_muted_to=None,
     ):
         self.state = state or cast_state(
             content_id=EXPECTED_URL,
             player_state=PLAYER_PLAYING,
         )
-        self.fail = fail
+        self.fail_get_state_times = fail_get_state_times
+        self.fail_set_muted_to = fail_set_muted_to
         self.actions = []
-        self.reset_calls = 0
 
     def get_state(self):
-        if self.fail:
-            if isinstance(self.fail, Exception):
-                raise self.fail
+        if self.fail_get_state_times > 0:
+            self.fail_get_state_times -= 1
             raise RuntimeError("cast unavailable")
         return self.state
 
@@ -89,6 +84,8 @@ class FakeCast:
 
     def set_muted(self, muted):
         self.actions.append(("set_muted", muted))
+        if self.fail_set_muted_to is not None and muted == self.fail_set_muted_to:
+            raise RuntimeError("mute restore failed")
         self.state = cast_state(
             content_id=self.state.content_id,
             player_state=self.state.player_state,
@@ -101,309 +98,222 @@ class FakeCast:
 
     def reset(self):
         self.actions.append(("reset",))
-        self.reset_calls += 1
-
-
-class FakePushcut:
-    def __init__(self):
-        self.play_calls = 0
-        self.stop_calls = 0
-
-    def trigger_play(self, dry_run=False):
-        self.play_calls += 1
-
-    def trigger_stop(self, dry_run=False):
-        self.stop_calls += 1
 
 
 class KeeperTest(unittest.TestCase):
-    def test_active_window_enforces_playback_when_expected_media_is_paused(self):
-        cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED))
-        keeper = build_keeper(cast=cast)
+    def test_retry_sleep_seconds_backs_off_up_to_thirty_seconds(self):
+        self.assertEqual(_retry_sleep_seconds(2.0, 0), 2.0)
+        self.assertEqual(_retry_sleep_seconds(2.0, 1), 2.0)
+        self.assertEqual(_retry_sleep_seconds(2.0, 2), 4.0)
+        self.assertEqual(_retry_sleep_seconds(2.0, 3), 8.0)
+        self.assertEqual(_retry_sleep_seconds(2.0, 5), 30.0)
 
-        result = keeper.run_once(active_datetime())
-
-        self.assertTrue(result.healthy)
-        self.assertTrue(keeper.state.force_enabled)
-        self.assertTrue(keeper.state.last_active_window)
-        self.assertIn(("play",), cast.actions)
-
-    def test_outside_window_does_not_enforce_playback_when_expected_media_is_paused(self):
-        cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED))
-        keeper = build_keeper(cast=cast)
-
-        result = keeper.run_once(outside_datetime())
-
-        self.assertTrue(result.healthy)
-        self.assertEqual(cast.actions, [])
-
-    def test_ipad_backup_triggers_after_failure_threshold_and_not_again_during_cooldown(self):
-        cast = FakeCast(fail=True)
-        pushcut = FakePushcut()
-        clock = SequenceClock([100.0, 131.0, 140.0])
-        keeper = build_keeper(cast=cast, pushcut=pushcut, clock=clock)
-
-        self.assertFalse(keeper.run_once(active_datetime()).healthy)
-        self.assertEqual(pushcut.play_calls, 0)
-
-        self.assertFalse(keeper.run_once(active_datetime()).healthy)
-        self.assertEqual(pushcut.play_calls, 1)
-        self.assertTrue(keeper.state.ipad_backup_active)
-
-        self.assertFalse(keeper.run_once(active_datetime()).healthy)
-        self.assertEqual(pushcut.play_calls, 1)
-
-    def test_ipad_backup_stops_after_ten_stable_minutes(self):
-        cast = FakeCast()
-        pushcut = FakePushcut()
-        state_store = InMemoryStateStore(RuntimeState(ipad_backup_active=True))
-        clock = SequenceClock([100.0, 699.0, 700.0])
-        keeper = build_keeper(
-            cast=cast,
-            pushcut=pushcut,
-            state_store=state_store,
-            clock=clock,
-        )
-
-        self.assertTrue(keeper.run_once(active_datetime()).healthy)
-        self.assertEqual(pushcut.stop_calls, 0)
-
-        self.assertTrue(keeper.run_once(active_datetime()).healthy)
-        self.assertEqual(pushcut.stop_calls, 0)
-
-        self.assertTrue(keeper.run_once(active_datetime()).healthy)
-        self.assertEqual(pushcut.stop_calls, 1)
-        self.assertFalse(keeper.state.ipad_backup_active)
-
-    def test_ipad_stop_timer_cancels_when_nest_fails_again(self):
-        cast = FakeCast()
-        pushcut = FakePushcut()
-        state_store = InMemoryStateStore(RuntimeState(ipad_backup_active=True))
-        clock = SequenceClock([100.0, 200.0, 700.0])
-        keeper = build_keeper(
-            cast=cast,
-            pushcut=pushcut,
-            state_store=state_store,
-            clock=clock,
-        )
-
-        self.assertTrue(keeper.run_once(active_datetime()).healthy)
-        cast.fail = True
-        self.assertFalse(keeper.run_once(active_datetime()).healthy)
-        cast.fail = False
-        self.assertTrue(keeper.run_once(active_datetime()).healthy)
-
-        self.assertEqual(pushcut.stop_calls, 0)
-        self.assertEqual(keeper.state.nest_recovered_started_at, 700.0)
-
-    def test_ipad_backup_stops_outside_active_window(self):
-        cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED))
-        pushcut = FakePushcut()
-        state_store = InMemoryStateStore(RuntimeState(ipad_backup_active=True))
-        keeper = build_keeper(cast=cast, pushcut=pushcut, state_store=state_store)
-
-        result = keeper.run_once(outside_datetime())
-
-        self.assertTrue(result.healthy)
-        self.assertEqual(pushcut.stop_calls, 1)
-        self.assertFalse(keeper.state.ipad_backup_active)
-
-    def test_disabled_ipad_backup_never_triggers_pushcut(self):
-        cast = FakeCast(fail=True)
-        pushcut = FakePushcut()
-        config = AppConfig(
-            cast=CastConfig(name=EXPECTED_CAST_NAME, url=EXPECTED_URL),
-            schedule=ScheduleConfig(active_start="20:00", active_end="08:00"),
-            monitor=MonitorConfig(interval_seconds=5),
-            ipad_backup=IpadBackupConfig(enabled=False),
-        )
-        keeper = WhiteNoiseKeeper(
-            config=config,
-            cast_client=cast,
-            state_store=InMemoryStateStore(),
-            pushcut_client=pushcut,
-            clock=SequenceClock([100.0, 1000.0]),
-        )
-
-        self.assertFalse(keeper.run_once(active_datetime()).healthy)
-        self.assertFalse(keeper.run_once(active_datetime()).healthy)
-        self.assertEqual(pushcut.play_calls, 0)
-
-    def test_stale_cast_failure_resets_connection_once(self):
-        cast = FakeCast(fail=RuntimeError("Chromecast 192.0.2.10:8009 is connecting..."))
-        keeper = build_keeper(cast=cast)
-
-        result = keeper.run_once(active_datetime())
-
-        self.assertFalse(result.healthy)
-        self.assertEqual(cast.reset_calls, 1)
-        self.assertIn(("reset",), cast.actions)
-
-    def test_generic_cast_failure_does_not_reset_connection(self):
-        cast = FakeCast(fail=RuntimeError("cast unavailable"))
-        keeper = build_keeper(cast=cast)
-
-        result = keeper.run_once(active_datetime())
-
-        self.assertFalse(result.healthy)
-        self.assertEqual(cast.reset_calls, 0)
-        self.assertNotIn(("reset",), cast.actions)
-
-    def test_active_window_end_disables_force_and_pauses(self):
-        cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PLAYING))
-        pushcut = FakePushcut()
-        state_store = InMemoryStateStore(
-            RuntimeState(
-                force_enabled=True,
-                last_active_window=True,
-                ipad_backup_active=True,
+    def test_run_once_persists_manual_tap_as_new_snapshot(self):
+        cast = FakeCast(
+            cast_state(
+                content_id="http://example.local/manual.mp4",
+                player_state=PLAYER_PLAYING,
+                volume_muted=True,
             )
         )
-        keeper = build_keeper(cast=cast, pushcut=pushcut, state_store=state_store)
+        state_store = InMemoryStateStore(
+            RuntimeState(
+                last_cast_state=snapshot(
+                    content_id=EXPECTED_URL,
+                    player_state=PLAYER_PAUSED,
+                    volume_muted=False,
+                )
+            )
+        )
+        keeper = build_keeper(cast=cast, state_store=state_store)
 
-        result = keeper.run_once(outside_datetime())
+        result = keeper.run_once()
 
         self.assertTrue(result.healthy)
-        self.assertFalse(keeper.state.force_enabled)
-        self.assertFalse(keeper.state.last_active_window)
+        self.assertEqual(keeper.state.last_cast_state, snapshot_from_cast_state(cast.state))
+        self.assertEqual(state_store.saved, 1)
+
+    def test_run_once_restores_last_successful_state_after_failure(self):
+        state = cast_state(
+            content_id="http://example.local/other.mp4",
+            player_state=PLAYER_PAUSED,
+            volume_muted=False,
+        )
+        cast = FakeCast(state=state, fail_get_state_times=1)
+        state_store = InMemoryStateStore(
+            RuntimeState(
+                last_cast_state=snapshot(
+                    content_id=EXPECTED_URL,
+                    player_state=PLAYER_PLAYING,
+                    volume_muted=True,
+                )
+            )
+        )
+        keeper = build_keeper(cast=cast, state_store=state_store)
+
+        result = keeper.run_once()
+
+        self.assertTrue(result.healthy)
         self.assertEqual(
             cast.actions,
             [
-                ("seek_to_start",),
-                ("pause",),
+                ("set_muted", True),
+                ("load", True),
+                ("set_muted", True),
             ],
         )
-        self.assertEqual(pushcut.stop_calls, 1)
-        self.assertFalse(keeper.state.ipad_backup_active)
+        self.assertEqual(keeper.state.last_cast_state, snapshot_from_cast_state(cast.state))
 
-    def test_stop_inside_active_window_disables_force_and_respects_nest_tap(self):
-        cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PLAYING))
-        keeper = build_keeper(cast=cast)
-        keeper.state.force_enabled = True
-        keeper._active_window = lambda now: True
-
-        snapshot = keeper.command_stop()
-
-        self.assertFalse(keeper.state.force_enabled)
-        self.assertTrue(keeper.state.last_active_window)
-        self.assertFalse(snapshot["force_enabled"])
-        self.assertEqual(
-            cast.actions,
-            [
-                ("seek_to_start",),
-                ("pause",),
-            ],
+    def test_start_records_exact_state_and_command_name(self):
+        cast = FakeCast(
+            cast_state(
+                content_id=EXPECTED_URL,
+                player_state=PLAYER_PAUSED,
+                volume_muted=True,
+            )
         )
-
-        cast.actions.clear()
-        cast.state = cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PLAYING)
-        result = keeper.run_once(active_datetime())
-
-        self.assertTrue(result.healthy)
-        self.assertEqual(cast.actions, [])
-
-    def test_start_plays_once_and_later_manual_pause_is_respected(self):
-        cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED))
         keeper = build_keeper(cast=cast)
-        keeper.state.force_enabled = True
-        keeper._active_window = lambda now: False
 
         snapshot = keeper.command_start()
 
-        self.assertFalse(keeper.state.force_enabled)
         self.assertEqual(snapshot["last_command"]["action"], "start")
-        self.assertIn(("play",), cast.actions)
+        self.assertEqual(keeper.state.last_command["action"], "start")
+        self.assertEqual(cast.actions, [("play",), ("set_muted", False)])
+        self.assertFalse(keeper.state.last_cast_state["volume_muted"])
 
-        cast.actions.clear()
-        cast.state = cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED)
-        result = keeper.run_once(outside_datetime())
-
-        self.assertTrue(result.healthy)
-        self.assertEqual(cast.actions, [])
-
-    def test_start_force_replays_after_manual_pause_until_stop(self):
-        cast = FakeCast(cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED))
-        keeper = build_keeper(cast=cast, clock=SequenceClock([100.0] * 10))
-        keeper._active_window = lambda now: False
-
-        keeper.command_start_force()
-        self.assertTrue(keeper.state.force_enabled)
-
-        cast.actions.clear()
-        cast.state = cast_state(content_id=EXPECTED_URL, player_state=PLAYER_PAUSED)
-        result = keeper.run_once(outside_datetime())
-
-        self.assertTrue(result.healthy)
-        self.assertIn(("play",), cast.actions)
-
-        keeper.command_stop()
-        self.assertFalse(keeper.state.force_enabled)
-
-    def test_wrong_media_outside_window_loads_white_noise_paused(self):
-        cast = FakeCast(cast_state(content_id="http://example.local/other.mp3"))
+    def test_stop_records_paused_state_exactly(self):
+        cast = FakeCast(
+            cast_state(
+                content_id=EXPECTED_URL,
+                player_state=PLAYER_PLAYING,
+                volume_muted=True,
+            )
+        )
         keeper = build_keeper(cast=cast)
 
-        result = keeper.run_once(outside_datetime())
+        snapshot = keeper.command_stop()
 
-        self.assertTrue(result.healthy)
-        self.assertIn(("load", False), cast.actions)
+        self.assertEqual(snapshot["last_command"]["action"], "stop")
+        self.assertEqual(
+            cast.actions,
+            [
+                ("seek_to_start",),
+                ("pause",),
+            ],
+        )
+        self.assertTrue(keeper.state.last_cast_state["volume_muted"])
+        self.assertEqual(keeper.state.last_cast_state["player_state"], PLAYER_PAUSED)
 
+    def test_start_unmutes_before_returning_state(self):
+        cast = FakeCast(
+            cast_state(
+                content_id=EXPECTED_URL,
+                player_state=PLAYER_PAUSED,
+                volume_muted=True,
+            )
+        )
+        keeper = build_keeper(cast=cast)
 
-def build_keeper(cast, pushcut=None, state_store=None, clock=None):
+        snapshot = keeper.command_start()
+
+        self.assertEqual(snapshot["last_command"]["action"], "start")
+        self.assertEqual(
+            cast.actions,
+            [
+                ("play",),
+                ("set_muted", False),
+            ],
+        )
+        self.assertFalse(keeper.state.last_cast_state["volume_muted"])
+
+    def test_run_once_starts_at_8pm(self):
+        cast = FakeCast(
+            cast_state(
+                content_id=EXPECTED_URL,
+                player_state=PLAYER_PAUSED,
+                volume_muted=True,
+            )
+        )
+        times = [
+            datetime.datetime(2026, 4, 22, 19, 59).timestamp(),
+            datetime.datetime(2026, 4, 22, 20, 0).timestamp(),
+        ]
+        keeper = build_keeper(cast=cast, clock=lambda: times.pop(0))
+
+        first = keeper.run_once()
+        second = keeper.run_once()
+
+        self.assertTrue(first.healthy)
+        self.assertTrue(second.healthy)
+        self.assertEqual(
+            cast.actions,
+            [
+                ("play",),
+                ("set_muted", False),
+            ],
+        )
+
+def build_keeper(cast, state_store=None, clock=None):
     config = AppConfig(
         cast=CastConfig(name=EXPECTED_CAST_NAME, url=EXPECTED_URL),
-        schedule=ScheduleConfig(active_start="20:00", active_end="08:00"),
         monitor=MonitorConfig(interval_seconds=5),
-        ipad_backup=IpadBackupConfig(
-            enabled=True,
-            play_url="https://pushcut.example/play",
-            stop_url="https://pushcut.example/stop",
-            trigger_after_failure_seconds=30,
-            retrigger_cooldown_seconds=1800,
-            stop_after_recovered_seconds=600,
-        ),
+        http=HttpConfig(enabled=False),
     )
-    return WhiteNoiseKeeper(
+    keeper = WhiteNoiseKeeper(
         config=config,
         cast_client=cast,
         state_store=state_store or InMemoryStateStore(),
-        pushcut_client=pushcut or FakePushcut(),
-        clock=clock or SequenceClock([100.0] * 20),
+        clock=clock or (lambda: 100.0),
     )
+    keeper.playback.audio_load_guard.sleep = lambda seconds: None
+    return keeper
 
 
 def cast_state(
     content_id=EXPECTED_URL,
     player_state=PLAYER_PLAYING,
+    current_time=0,
+    duration=3600,
     volume_muted=False,
     volume_level=0.77,
 ):
     return CastState(
         content_id=content_id,
         player_state=player_state,
-        current_time=0,
-        duration=3600,
+        current_time=current_time,
+        duration=duration,
         volume_muted=volume_muted,
         volume_level=volume_level,
     )
 
 
-def active_datetime():
-    return datetime(2026, 1, 1, 21, 0, 0)
+def snapshot(
+    content_id=EXPECTED_URL,
+    player_state=PLAYER_PLAYING,
+    current_time=0,
+    duration=3600,
+    volume_muted=False,
+    volume_level=0.77,
+):
+    return {
+        "content_id": content_id,
+        "player_state": player_state,
+        "current_time": current_time,
+        "duration": duration,
+        "volume_muted": volume_muted,
+        "volume_level": volume_level,
+    }
 
 
-def outside_datetime():
-    return datetime(2026, 1, 1, 12, 0, 0)
-
-
-class SequenceClock:
-    def __init__(self, values):
-        self.values = list(values)
-
-    def __call__(self):
-        if len(self.values) == 1:
-            return self.values[0]
-        return self.values.pop(0)
+def snapshot_from_cast_state(state):
+    return snapshot(
+        content_id=state.content_id,
+        player_state=state.player_state,
+        current_time=state.current_time,
+        duration=state.duration,
+        volume_muted=state.volume_muted,
+        volume_level=state.volume_level,
+    )
 
 
 if __name__ == "__main__":

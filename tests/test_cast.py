@@ -106,7 +106,7 @@ class CastMediaTest(unittest.TestCase):
             media.actions,
             [
                 ("play_media", url, "video/mp4", False, "BUFFERED"),
-                ("block_until_active", 10),
+                ("block_until_active", 5),
                 ("update_status",),
             ],
         )

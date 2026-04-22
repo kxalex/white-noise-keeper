@@ -10,7 +10,6 @@ LOG = logging.getLogger(__name__)
 
 ACTION_METHODS: dict[str, str] = {
     "/v1/actions/start": "command_start",
-    "/v1/actions/start-force": "command_start_force",
     "/v1/actions/stop": "command_stop",
 }
 
@@ -43,10 +42,7 @@ def make_handler(keeper) -> type[BaseHTTPRequestHandler]:
         def do_POST(self) -> None:
             method_name = ACTION_METHODS.get(self.path)
             if method_name is None:
-                if self.path == "/v1/status":
-                    self._write_json(405, {"ok": False, "error": "method not allowed"})
-                else:
-                    self._write_json(404, {"ok": False, "error": "not found"})
+                self._write_json(404, {"ok": False, "error": "not found"})
                 return
             self._run_command(getattr(keeper, method_name))
 

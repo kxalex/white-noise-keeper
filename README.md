@@ -1,6 +1,6 @@
 # White Noise Keeper
 
-Long-running Raspberry Pi service that keeps a Google Nest playing white noise during sleep hours. iPad backup support is implemented but disabled by default; enable it later after Pushcut Automation Server is installed and tested.
+Long-running Raspberry Pi service that keeps a Google Nest white-noise session alive and restores the last successful cast state after disconnects.
 
 ## Install On Raspberry Pi
 
@@ -32,8 +32,6 @@ Edit `/etc/white-noise-keeper/config.toml` and set the real Nest name, stream UR
 ```sh
 sudo systemctl start white-noise-keeper
 ```
-
-Leave `ipad_backup.enabled = false` until Pushcut is ready.
 
 ## Updating On Raspberry Pi
 
@@ -77,24 +75,6 @@ Inspect and repair once:
 white-noise-keeper --config /etc/white-noise-keeper/config.toml --once --debug
 ```
 
-Validate Pushcut play URL without sending it, after Pushcut URLs are configured:
-
-```sh
-white-noise-keeper --config /etc/white-noise-keeper/config.toml --trigger-ipad-backup --dry-run
-```
-
-Send Pushcut play request:
-
-```sh
-white-noise-keeper --config /etc/white-noise-keeper/config.toml --trigger-ipad-backup
-```
-
-Send Pushcut stop request:
-
-```sh
-white-noise-keeper --config /etc/white-noise-keeper/config.toml --stop-ipad-backup
-```
-
 Watch service logs:
 
 ```sh
@@ -126,43 +106,17 @@ Start white noise once:
 curl -X POST http://<pi-ip>:8765/v1/actions/start
 ```
 
-Start and keep white noise running until `stop` or the active window ends:
-
-```sh
-curl -X POST http://<pi-ip>:8765/v1/actions/start-force
-```
-
 Stop white noise by pausing and rewinding it. You can start it again from the Nest or API:
 
 ```sh
 curl -X POST http://<pi-ip>:8765/v1/actions/stop
 ```
 
-## Pushcut Setup
-
-This section is optional. The live service does not use Pushcut while `ipad_backup.enabled = false`.
-
-Create two iPad Shortcuts:
-
-- `Play White Noise Backup`: set iPad volume, play the selected Music track or playlist, and enable repeat if needed.
-- `Stop White Noise Backup`: stop Music playback.
-
-Run Pushcut Automation Server on the iPad, keep Pushcut in the foreground, and place the two execute URLs in the config. Use `timeout=nowait` in both URLs so the Pi does not block while the iPad runs a shortcut.
-
-Then set:
-
-```toml
-[ipad_backup]
-enabled = true
-play_url = "https://api.pushcut.io/<replace-me>/execute?shortcut=Play%20White%20Noise%20Backup&timeout=nowait"
-stop_url = "https://api.pushcut.io/<replace-me>/execute?shortcut=Stop%20White%20Noise%20Backup&timeout=nowait"
-```
-
 ## Notes
 
-The service checks every 2 seconds while inside the active window. systemd does not restart it every 2 seconds; systemd starts it at boot and restarts it only after failure.
+The service checks every 2 seconds. systemd watchdog pings run in a separate heartbeat thread, so a slow Chromecast reconnect no longer starves the watchdog and kills the process.
 
-PyChromecast uses mDNS for discovery. If discovery is unreliable, set `known_hosts` in the config.
+PyChromecast uses mDNS for discovery. If discovery is unreliable, set `known_hosts` in the config. The default discovery timeout is now shorter, so `known_hosts` matters more on flaky networks.
 
 ## Packaging Options
 

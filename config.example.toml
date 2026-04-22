@@ -2,14 +2,10 @@
 name = "Demo Room Cast A7K4"
 url = "http://192.0.2.42:9000/example-white-noise.mp4"
 content_type = "video/mp4"
-discovery_timeout_seconds = 30
+discovery_timeout_seconds = 10
 
 # Optional fallback when mDNS discovery is flaky.
 # known_hosts = ["192.0.2.50"]
-
-[schedule]
-active_start = "20:00"
-active_end = "08:00"
 
 [monitor]
 interval_seconds = 2
@@ -19,12 +15,3 @@ state_path = "/var/lib/white-noise-keeper/state.json"
 enabled = true
 host = "0.0.0.0"
 port = 8765
-
-[ipad_backup]
-# Keep this disabled until Pushcut Automation Server is installed and tested.
-enabled = false
-play_url = ""
-stop_url = ""
-trigger_after_failure_seconds = 30
-retrigger_cooldown_seconds = 1800
-stop_after_recovered_seconds = 600

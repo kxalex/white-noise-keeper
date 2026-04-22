@@ -10,75 +10,51 @@ LOG = logging.getLogger(__name__)
 
 @dataclass
 class RuntimeState:
-    ipad_backup_active: bool = False
-    last_ipad_play_triggered_at: float | None = None
-    nest_failure_started_at: float | None = None
-    nest_recovered_started_at: float | None = None
-    force_enabled: bool = False
-    last_active_window: bool | None = None
-    last_command: dict | None = None
     last_cast_state: dict | None = None
+    last_command: dict | None = None
 
 
 class StateStore:
     def __init__(self, path: Path):
         self.path = path
+        self._last_serialized: str | None = None
 
     def load(self) -> RuntimeState:
         if not self.path.exists():
+            self._last_serialized = None
             return RuntimeState()
         try:
             with self.path.open("r", encoding="utf-8") as state_file:
                 data = json.load(state_file)
         except (OSError, json.JSONDecodeError) as exc:
             LOG.warning("Could not load runtime state from %s: %s", self.path, exc)
+            self._last_serialized = None
             return RuntimeState()
-        return RuntimeState(
-            ipad_backup_active=bool(data.get("ipad_backup_active", False)),
-            last_ipad_play_triggered_at=_optional_float(
-                data.get("last_ipad_play_triggered_at")
-            ),
-            nest_failure_started_at=_optional_float(data.get("nest_failure_started_at")),
-            nest_recovered_started_at=_optional_float(
-                data.get("nest_recovered_started_at")
-            ),
-            force_enabled=_optional_bool(data.get("force_enabled")) or False,
-            last_active_window=_optional_bool(data.get("last_active_window")),
-            last_command=_optional_dict(data.get("last_command")),
+        state = RuntimeState(
             last_cast_state=_optional_dict(data.get("last_cast_state")),
+            last_command=_optional_dict(data.get("last_command")),
         )
+        self._last_serialized = self._serialize(state)
+        return state
 
     def save(self, state: RuntimeState) -> None:
+        serialized = self._serialize(state)
+        if serialized == self._last_serialized:
+            return
+
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = self.path.with_suffix(self.path.suffix + ".tmp")
-        data = {
-            "ipad_backup_active": state.ipad_backup_active,
-            "last_ipad_play_triggered_at": state.last_ipad_play_triggered_at,
-            "nest_failure_started_at": state.nest_failure_started_at,
-            "nest_recovered_started_at": state.nest_recovered_started_at,
-            "force_enabled": state.force_enabled,
-            "last_active_window": state.last_active_window,
-            "last_command": state.last_command,
-            "last_cast_state": state.last_cast_state,
-        }
         with temp_path.open("w", encoding="utf-8") as state_file:
-            json.dump(data, state_file, indent=2, sort_keys=True)
-            state_file.write("\n")
+            state_file.write(serialized)
         temp_path.replace(self.path)
+        self._last_serialized = serialized
 
-
-def _optional_float(value):
-    if value is None:
-        return None
-    return float(value)
-
-
-def _optional_bool(value):
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return value
-    return None
+    def _serialize(self, state: RuntimeState) -> str:
+        data = {
+            "last_cast_state": state.last_cast_state,
+            "last_command": state.last_command,
+        }
+        return json.dumps(data, indent=2, sort_keys=True) + "\n"
 
 
 def _optional_dict(value):

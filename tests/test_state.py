@@ -6,16 +6,36 @@ from white_noise_keeper.state import RuntimeState, StateStore
 
 
 class StateStoreTest(unittest.TestCase):
-    def test_force_state_round_trips(self):
+    def test_last_cast_state_round_trips(self):
         with tempfile.TemporaryDirectory() as directory:
             state_path = Path(directory) / "state.json"
             store = StateStore(state_path)
 
-            store.save(RuntimeState(force_enabled=True, last_active_window=False))
+            snapshot = {
+                "content_id": "http://example.local/white-noise.mp4",
+                "player_state": "PLAYING",
+                "current_time": 12.5,
+                "duration": 3600.0,
+                "volume_muted": False,
+                "volume_level": 0.77,
+            }
+            store.save(RuntimeState(last_cast_state=snapshot))
             state = store.load()
 
-        self.assertTrue(state.force_enabled)
-        self.assertFalse(state.last_active_window)
+        self.assertEqual(state.last_cast_state, snapshot)
+
+    def test_save_skips_unchanged_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "state.json"
+            store = StateStore(state_path)
+            state = RuntimeState(last_cast_state={"player_state": "PLAYING"})
+
+            store.save(state)
+            first_contents = state_path.read_text(encoding="utf-8")
+            store.save(state)
+            second_contents = state_path.read_text(encoding="utf-8")
+
+        self.assertEqual(first_contents, second_contents)
 
 
 if __name__ == "__main__":

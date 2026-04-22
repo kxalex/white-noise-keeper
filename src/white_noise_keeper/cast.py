@@ -9,9 +9,9 @@ from typing import Protocol
 from .config import CastConfig
 
 LOG = logging.getLogger(__name__)
-VOLUME_CONFIRM_TIMEOUT_SECONDS = 2.0
+VOLUME_CONFIRM_TIMEOUT_SECONDS = 1.0
 VOLUME_CONFIRM_INTERVAL_SECONDS = 0.05
-MEDIA_LOAD_CONFIRM_TIMEOUT_SECONDS = 10.0
+MEDIA_LOAD_CONFIRM_TIMEOUT_SECONDS = 5.0
 MEDIA_LOAD_CONFIRM_INTERVAL_SECONDS = 0.1
 
 
@@ -124,7 +124,7 @@ class PyChromecastClient:
             raise RuntimeError(
                 f"Chromecast media load command failed: {load_result.get('response')}"
             )
-        media.block_until_active(timeout=10)
+        media.block_until_active(timeout=5)
         _wait_for_media_loaded(media, self.config.url)
         LOG.info("Media confirmed loaded: %s", self.config.url)
 
@@ -178,7 +178,7 @@ def _optional_float(value) -> float | None:
     return float(value)
 
 
-def _refresh_media_status(media, timeout: float = 2.0) -> bool:
+def _refresh_media_status(media, timeout: float = 1.0) -> bool:
     if not _can_refresh_media_status_without_launch(media):
         LOG.debug("Skipping media status refresh because media app is not running")
         return False
