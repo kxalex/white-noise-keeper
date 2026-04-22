@@ -183,6 +183,30 @@ class KeeperTest(unittest.TestCase):
         self.assertFalse(result.healthy)
         self.assertEqual(cast.actions, [("reset",)])
 
+    def test_status_snapshot_returns_last_published_state(self):
+        keeper = build_keeper(
+            cast=FakeCast(),
+            state_store=InMemoryStateStore(
+                RuntimeState(
+                    last_cast_state=snapshot(
+                        content_id=EXPECTED_URL,
+                        player_state=PLAYER_PAUSED,
+                        volume_muted=False,
+                    )
+                )
+            ),
+        )
+        keeper.state.last_cast_state = snapshot(
+            content_id="http://example.local/in-flight.mp4",
+            player_state=PLAYER_PLAYING,
+            volume_muted=True,
+        )
+
+        status = keeper.status_snapshot()
+
+        self.assertEqual(status["last_cast_state"]["content_id"], EXPECTED_URL)
+        self.assertEqual(status["last_cast_state"]["player_state"], PLAYER_PAUSED)
+
     def test_run_once_restores_last_media_snapshot_when_cast_reports_idle(self):
         cast = FakeCast(
             cast_state(

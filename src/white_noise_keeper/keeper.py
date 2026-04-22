@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from .cast import CastClient, CastState
 from .config import AppConfig
 from .playback import WhiteNoisePlayback
-from .state import StateStore
+from .state import RuntimeState, StateStore
 from .systemd import SystemdNotifier, start_watchdog_heartbeat
 
 LOG = logging.getLogger("white_noise_keeper.keeper")
@@ -36,6 +36,7 @@ class WhiteNoiseKeeper:
         self.notifier = notifier or SystemdNotifier()
         self.clock = clock
         self.state = state_store.load()
+        self._published_state = _copy_runtime_state(self.state)
         self.playback = WhiteNoisePlayback(
             cast_client,
             config.cast.url,
@@ -124,6 +125,7 @@ class WhiteNoiseKeeper:
             current = self._maybe_start_at_eight_pm(current)
             self._store_cast_state(current)
             self.state_store.save(self.state)
+            self._publish_state()
             return KeeperResult(healthy=True, message=_state_message(current))
 
     def command_start(self) -> dict:
@@ -133,12 +135,11 @@ class WhiteNoiseKeeper:
         return self._run_command("stop", self.playback.pause_at_beginning)
 
     def status_snapshot(self) -> dict:
-        with self._lock:
-            return {
-                "ok": True,
-                "last_command": self.state.last_command,
-                "last_cast_state": self.state.last_cast_state,
-            }
+        return {
+            "ok": True,
+            "last_command": _copy_optional_dict(self._published_state.last_command),
+            "last_cast_state": _copy_optional_dict(self._published_state.last_cast_state),
+        }
 
     def _run_command(self, action: str, runner) -> dict:
         with self._lock:
@@ -149,6 +150,7 @@ class WhiteNoiseKeeper:
             self._store_cast_state(current)
             self._record_command(action)
             self.state_store.save(self.state)
+            self._publish_state()
             return {
                 "ok": True,
                 "last_command": self.state.last_command,
@@ -180,6 +182,9 @@ class WhiteNoiseKeeper:
             "action": action,
             "timestamp": self.clock(),
         }
+
+    def _publish_state(self) -> None:
+        self._published_state = _copy_runtime_state(self.state)
 
     def _saved_media_snapshot(self) -> dict | None:
         snapshot = self.state.last_cast_state
@@ -213,3 +218,16 @@ def _retry_sleep_seconds(base_interval: float, failure_count: int) -> float:
     cap = max(base_interval, 10.0)
     exponent = min(failure_count - 1, 4)
     return min(base_interval * (2**exponent), cap)
+
+
+def _copy_runtime_state(state: RuntimeState) -> RuntimeState:
+    return RuntimeState(
+        last_cast_state=_copy_optional_dict(state.last_cast_state),
+        last_command=_copy_optional_dict(state.last_command),
+    )
+
+
+def _copy_optional_dict(value: dict | None) -> dict | None:
+    if value is None:
+        return None
+    return dict(value)
