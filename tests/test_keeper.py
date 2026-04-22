@@ -108,7 +108,7 @@ class KeeperTest(unittest.TestCase):
         self.assertEqual(_retry_sleep_seconds(2.0, 3), 8.0)
         self.assertEqual(_retry_sleep_seconds(2.0, 5), 10.0)
 
-    def test_run_once_persists_manual_tap_as_new_snapshot(self):
+    def test_run_once_replaces_different_media_with_expected_media(self):
         cast = FakeCast(
             cast_state(
                 content_id="http://example.local/manual.mp4",
@@ -130,8 +130,17 @@ class KeeperTest(unittest.TestCase):
         result = keeper.run_once()
 
         self.assertTrue(result.healthy)
+        self.assertEqual(
+            cast.actions,
+            [
+                ("set_muted", True),
+                ("load", False),
+                ("set_muted", False),
+            ],
+        )
         self.assertEqual(keeper.state.last_cast_state, snapshot_from_cast_state(cast.state))
-        self.assertEqual(state_store.saved, 1)
+        self.assertEqual(keeper.state.last_cast_state["content_id"], EXPECTED_URL)
+        self.assertEqual(keeper.state.last_cast_state["player_state"], PLAYER_PAUSED)
 
     def test_run_once_restores_last_successful_state_after_failure(self):
         state = cast_state(
@@ -196,7 +205,7 @@ class KeeperTest(unittest.TestCase):
         )
         self.assertEqual(keeper.state.last_cast_state, snapshot_from_cast_state(cast.state))
 
-    def test_run_once_does_not_save_idle_as_last_good_state(self):
+    def test_run_once_loads_media_paused_when_no_state_exists(self):
         cast = FakeCast(
             cast_state(
                 content_id=None,
@@ -210,7 +219,16 @@ class KeeperTest(unittest.TestCase):
         result = keeper.run_once()
 
         self.assertTrue(result.healthy)
-        self.assertIsNone(keeper.state.last_cast_state)
+        self.assertEqual(
+            cast.actions,
+            [
+                ("set_muted", True),
+                ("load", False),
+                ("set_muted", False),
+            ],
+        )
+        self.assertEqual(keeper.state.last_cast_state, snapshot_from_cast_state(cast.state))
+        self.assertEqual(keeper.state.last_cast_state["player_state"], PLAYER_PAUSED)
 
     def test_start_records_exact_state_and_command_name(self):
         cast = FakeCast(

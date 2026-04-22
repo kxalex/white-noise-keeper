@@ -94,10 +94,10 @@ class WhiteNoiseKeeper:
                         message=f"Cast restore failed: {restore_exc}",
                     )
 
-            if current.content_id is None:
+            if current.content_id != self.config.cast.url:
                 snapshot = self._saved_media_snapshot()
                 if snapshot is not None:
-                    LOG.info("Cast is idle; restoring last successful media state")
+                    LOG.info("Cast media differs; restoring last successful media state")
                     try:
                         current = self.playback.restore_snapshot(snapshot)
                     except Exception as restore_exc:
@@ -105,6 +105,18 @@ class WhiteNoiseKeeper:
                         return KeeperResult(
                             healthy=False,
                             message=f"Cast restore failed: {restore_exc}",
+                        )
+                else:
+                    LOG.info(
+                        "Cast media differs and no saved state exists; loading paused"
+                    )
+                    try:
+                        current = self.playback.ensure_loaded(autoplay=False)
+                    except Exception as load_exc:
+                        LOG.warning("Cast preload failed: %s", load_exc)
+                        return KeeperResult(
+                            healthy=False,
+                            message=f"Cast preload failed: {load_exc}",
                         )
 
             self._store_cast_state(current)
@@ -147,7 +159,7 @@ class WhiteNoiseKeeper:
 
     def _store_cast_state(self, state: CastState) -> None:
         snapshot = self._snapshot(state)
-        if snapshot["content_id"] is None:
+        if snapshot["content_id"] != self.config.cast.url:
             return
         if snapshot != self.state.last_cast_state:
             self.state.last_cast_state = snapshot
