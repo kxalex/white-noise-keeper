@@ -4,7 +4,11 @@ import datetime
 
 from white_noise_keeper.cast import CastState, PLAYER_PAUSED, PLAYER_PLAYING
 from white_noise_keeper.config import AppConfig, CastConfig, HttpConfig, MonitorConfig
-from white_noise_keeper.keeper import WhiteNoiseKeeper, _retry_sleep_seconds
+from white_noise_keeper.keeper import (
+    WhiteNoiseKeeper,
+    _retry_sleep_seconds,
+    _seconds_until_next_eight_pm,
+)
 from white_noise_keeper.state import RuntimeState
 
 
@@ -326,32 +330,12 @@ class KeeperTest(unittest.TestCase):
         )
         self.assertFalse(keeper.state.last_cast_state["volume_muted"])
 
-    def test_run_once_starts_at_8pm(self):
-        cast = FakeCast(
-            cast_state(
-                content_id=EXPECTED_URL,
-                player_state=PLAYER_PAUSED,
-                volume_muted=True,
-            )
-        )
-        times = [
-            datetime.datetime(2026, 4, 22, 19, 59).timestamp(),
-            datetime.datetime(2026, 4, 22, 20, 0).timestamp(),
-        ]
-        keeper = build_keeper(cast=cast, clock=lambda: times.pop(0))
+    def test_seconds_until_next_eight_pm(self):
+        just_before = datetime.datetime(2026, 4, 22, 19, 30).timestamp()
+        just_after = datetime.datetime(2026, 4, 22, 20, 30).timestamp()
 
-        first = keeper.run_once()
-        second = keeper.run_once()
-
-        self.assertTrue(first.healthy)
-        self.assertTrue(second.healthy)
-        self.assertEqual(
-            cast.actions,
-            [
-                ("play",),
-                ("set_muted", False),
-            ],
-        )
+        self.assertEqual(_seconds_until_next_eight_pm(just_before), 1800.0)
+        self.assertEqual(_seconds_until_next_eight_pm(just_after), 84600.0)
 
 def build_keeper(cast, state_store=None, clock=None):
     config = AppConfig(

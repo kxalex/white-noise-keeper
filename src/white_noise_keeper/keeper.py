@@ -56,6 +56,11 @@ class WhiteNoiseKeeper:
             )
         self.notifier.ready()
         start_watchdog_heartbeat(self.notifier)
+        threading.Thread(
+            target=self._run_daily_start_scheduler,
+            name="white-noise-keeper-scheduler",
+            daemon=True,
+        ).start()
         failure_count = 0
         while True:
             try:
@@ -121,8 +126,6 @@ class WhiteNoiseKeeper:
                             message=f"Cast preload failed: {load_exc}",
                         )
 
-            self._store_cast_state(current)
-            current = self._maybe_start_at_eight_pm(current)
             self._store_cast_state(current)
             self.state_store.save(self.state)
             self._publish_state()
@@ -194,14 +197,15 @@ class WhiteNoiseKeeper:
             return None
         return snapshot
 
-    def _maybe_start_at_eight_pm(self, state: CastState) -> CastState:
-        now = datetime.datetime.fromtimestamp(self.clock())
-        if now.hour < 20:
-            return state
-        if state.playing:
-            return state
-        LOG.info("8pm reached; starting white noise")
-        return self.playback.ensure_playing()
+    def _run_daily_start_scheduler(self) -> None:
+        while True:
+            delay_seconds = _seconds_until_next_eight_pm(self.clock())
+            time.sleep(delay_seconds)
+            try:
+                LOG.info("8pm reached; starting white noise")
+                self.command_start()
+            except Exception as exc:  # pragma: no cover - scheduler is best effort
+                LOG.warning("Scheduled start failed: %s", exc)
 
 def _state_message(state: CastState) -> str:
     if state.content_id is None:
@@ -225,6 +229,14 @@ def _copy_runtime_state(state: RuntimeState) -> RuntimeState:
         last_cast_state=_copy_optional_dict(state.last_cast_state),
         last_command=_copy_optional_dict(state.last_command),
     )
+
+
+def _seconds_until_next_eight_pm(now_seconds: float) -> float:
+    now = datetime.datetime.fromtimestamp(now_seconds)
+    next_run = now.replace(hour=20, minute=0, second=0, microsecond=0)
+    if now >= next_run:
+        next_run += datetime.timedelta(days=1)
+    return max(0.0, (next_run - now).total_seconds())
 
 
 def _copy_optional_dict(value: dict | None) -> dict | None:
