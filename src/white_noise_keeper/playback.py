@@ -66,7 +66,7 @@ class AudioLoadGuard:
             self._restore_target_muted()
         except Exception as restore_exc:
             LOG.warning(
-                "Failed to restore Chromecast mute state: %s",
+                "Chromecast mute restore timed out: %s",
                 restore_exc,
             )
             return False
@@ -82,7 +82,7 @@ class AudioLoadGuard:
             self._restore_target_muted()
         except Exception as restore_exc:
             LOG.warning(
-                "Failed to restore Chromecast mute state after failed load: %s",
+                "Chromecast mute restore timed out after failed load: %s",
                 restore_exc,
             )
             return False

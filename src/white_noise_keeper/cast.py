@@ -13,6 +13,7 @@ VOLUME_CONFIRM_TIMEOUT_SECONDS = 1.0
 VOLUME_CONFIRM_INTERVAL_SECONDS = 0.05
 MEDIA_LOAD_CONFIRM_TIMEOUT_SECONDS = 5.0
 MEDIA_LOAD_CONFIRM_INTERVAL_SECONDS = 0.1
+MEDIA_STATUS_REFRESH_TIMEOUT_SECONDS = 2.0
 
 
 PLAYER_PLAYING = "PLAYING"
@@ -178,7 +179,10 @@ def _optional_float(value) -> float | None:
     return float(value)
 
 
-def _refresh_media_status(media, timeout: float = 1.0) -> bool:
+def _refresh_media_status(
+    media,
+    timeout: float = MEDIA_STATUS_REFRESH_TIMEOUT_SECONDS,
+) -> bool:
     if not _can_refresh_media_status_without_launch(media):
         LOG.debug("Skipping media status refresh because media app is not running")
         return False
@@ -195,7 +199,8 @@ def _refresh_media_status(media, timeout: float = 1.0) -> bool:
         time.sleep(0.2)
         return True
 
-    refreshed.wait(timeout=timeout)
+    if not refreshed.wait(timeout=timeout):
+        raise TimeoutError("Chromecast media status refresh timed out")
     return True
 
 

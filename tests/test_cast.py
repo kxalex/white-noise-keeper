@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from white_noise_keeper.cast import (
     PyChromecastClient,
+    _refresh_media_status,
     _wait_for_media_loaded,
     _wait_for_volume_muted,
 )
@@ -139,6 +140,17 @@ class CastMediaTest(unittest.TestCase):
                         media,
                         "http://example.local/white-noise.mp4",
                     )
+
+    def test_refresh_media_status_times_out_when_cast_does_not_answer(self):
+        media = fake_media(content_id="http://example.local/white-noise.mp4")
+        media.update_status = lambda callback_function=None: None
+
+        with patch(
+            "white_noise_keeper.cast.MEDIA_STATUS_REFRESH_TIMEOUT_SECONDS",
+            0.01,
+        ):
+            with self.assertRaises(TimeoutError):
+                _refresh_media_status(media)
 
 
 def fake_cast(volume_level=0.9, volume_muted=False):

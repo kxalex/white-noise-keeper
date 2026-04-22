@@ -166,12 +166,22 @@ class KeeperTest(unittest.TestCase):
         self.assertEqual(
             cast.actions,
             [
+                ("reset",),
                 ("set_muted", True),
                 ("load", True),
                 ("set_muted", True),
             ],
         )
         self.assertEqual(keeper.state.last_cast_state, snapshot_from_cast_state(cast.state))
+
+    def test_run_once_resets_cast_after_health_check_failure_without_state(self):
+        cast = FakeCast(fail_get_state_times=1)
+        keeper = build_keeper(cast=cast, state_store=InMemoryStateStore())
+
+        result = keeper.run_once()
+
+        self.assertFalse(result.healthy)
+        self.assertEqual(cast.actions, [("reset",)])
 
     def test_run_once_restores_last_media_snapshot_when_cast_reports_idle(self):
         cast = FakeCast(

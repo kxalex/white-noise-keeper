@@ -82,6 +82,7 @@ class WhiteNoiseKeeper:
                 current = self.playback.current_state()
             except Exception as exc:
                 LOG.warning("Cast health check failed: %s", exc)
+                self.cast.reset()
                 snapshot = self._saved_media_snapshot()
                 if snapshot is None:
                     return KeeperResult(healthy=False, message=f"Cast unavailable: {exc}")
