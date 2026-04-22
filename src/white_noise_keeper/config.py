@@ -21,7 +21,7 @@ class CastConfig:
 
 @dataclass(frozen=True)
 class MonitorConfig:
-    interval_seconds: float = 5.0
+    interval_seconds: float = 2.0
     state_path: Path = Path("/var/lib/white-noise-keeper/state.json")
 
 

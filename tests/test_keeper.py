@@ -106,7 +106,7 @@ class KeeperTest(unittest.TestCase):
         self.assertEqual(_retry_sleep_seconds(2.0, 1), 2.0)
         self.assertEqual(_retry_sleep_seconds(2.0, 2), 4.0)
         self.assertEqual(_retry_sleep_seconds(2.0, 3), 8.0)
-        self.assertEqual(_retry_sleep_seconds(2.0, 5), 30.0)
+        self.assertEqual(_retry_sleep_seconds(2.0, 5), 10.0)
 
     def test_run_once_persists_manual_tap_as_new_snapshot(self):
         cast = FakeCast(
@@ -163,6 +163,54 @@ class KeeperTest(unittest.TestCase):
             ],
         )
         self.assertEqual(keeper.state.last_cast_state, snapshot_from_cast_state(cast.state))
+
+    def test_run_once_restores_last_media_snapshot_when_cast_reports_idle(self):
+        cast = FakeCast(
+            cast_state(
+                content_id=None,
+                player_state=None,
+                volume_muted=False,
+            )
+        )
+        state_store = InMemoryStateStore(
+            RuntimeState(
+                last_cast_state=snapshot(
+                    content_id=EXPECTED_URL,
+                    player_state=PLAYER_PLAYING,
+                    volume_muted=True,
+                )
+            )
+        )
+        keeper = build_keeper(cast=cast, state_store=state_store)
+
+        result = keeper.run_once()
+
+        self.assertTrue(result.healthy)
+        self.assertEqual(
+            cast.actions,
+            [
+                ("set_muted", True),
+                ("load", True),
+                ("set_muted", True),
+            ],
+        )
+        self.assertEqual(keeper.state.last_cast_state, snapshot_from_cast_state(cast.state))
+
+    def test_run_once_does_not_save_idle_as_last_good_state(self):
+        cast = FakeCast(
+            cast_state(
+                content_id=None,
+                player_state=None,
+                volume_muted=False,
+            )
+        )
+        state_store = InMemoryStateStore()
+        keeper = build_keeper(cast=cast, state_store=state_store)
+
+        result = keeper.run_once()
+
+        self.assertTrue(result.healthy)
+        self.assertIsNone(keeper.state.last_cast_state)
 
     def test_start_records_exact_state_and_command_name(self):
         cast = FakeCast(

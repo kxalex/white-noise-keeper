@@ -37,7 +37,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(config.cast.name, "Example Cast")
         self.assertEqual(config.cast.url, "http://example.local/noise.mp4")
         self.assertEqual(config.cast.content_type, "video/mp4")
-        self.assertEqual(config.monitor.interval_seconds, 5.0)
+        self.assertEqual(config.monitor.interval_seconds, 2.0)
 
 
 if __name__ == "__main__":

@@ -82,7 +82,7 @@ class WhiteNoiseKeeper:
                 current = self.playback.current_state()
             except Exception as exc:
                 LOG.warning("Cast health check failed: %s", exc)
-                snapshot = self.state.last_cast_state
+                snapshot = self._saved_media_snapshot()
                 if snapshot is None:
                     return KeeperResult(healthy=False, message=f"Cast unavailable: {exc}")
                 try:
@@ -93,6 +93,19 @@ class WhiteNoiseKeeper:
                         healthy=False,
                         message=f"Cast restore failed: {restore_exc}",
                     )
+
+            if current.content_id is None:
+                snapshot = self._saved_media_snapshot()
+                if snapshot is not None:
+                    LOG.info("Cast is idle; restoring last successful media state")
+                    try:
+                        current = self.playback.restore_snapshot(snapshot)
+                    except Exception as restore_exc:
+                        LOG.warning("Cast restore failed: %s", restore_exc)
+                        return KeeperResult(
+                            healthy=False,
+                            message=f"Cast restore failed: {restore_exc}",
+                        )
 
             self._store_cast_state(current)
             current = self._maybe_start_at_eight_pm(current)
@@ -130,10 +143,12 @@ class WhiteNoiseKeeper:
             }
 
     def _remember_cast_state(self, state: CastState) -> None:
-        self.state.last_cast_state = self._snapshot(state)
+        self._store_cast_state(state)
 
     def _store_cast_state(self, state: CastState) -> None:
         snapshot = self._snapshot(state)
+        if snapshot["content_id"] is None:
+            return
         if snapshot != self.state.last_cast_state:
             self.state.last_cast_state = snapshot
 
@@ -152,6 +167,14 @@ class WhiteNoiseKeeper:
             "action": action,
             "timestamp": self.clock(),
         }
+
+    def _saved_media_snapshot(self) -> dict | None:
+        snapshot = self.state.last_cast_state
+        if snapshot is None:
+            return None
+        if snapshot.get("content_id") is None:
+            return None
+        return snapshot
 
     def _maybe_start_at_eight_pm(self, state: CastState) -> CastState:
         now = datetime.datetime.fromtimestamp(self.clock())
@@ -174,6 +197,6 @@ def _retry_sleep_seconds(base_interval: float, failure_count: int) -> float:
     if failure_count <= 0:
         return base_interval
 
-    cap = max(base_interval, 30.0)
+    cap = max(base_interval, 10.0)
     exponent = min(failure_count - 1, 4)
     return min(base_interval * (2**exponent), cap)
