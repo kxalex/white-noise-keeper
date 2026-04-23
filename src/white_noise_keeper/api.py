@@ -44,7 +44,12 @@ def make_handler(keeper) -> type[BaseHTTPRequestHandler]:
             if method_name is None:
                 self._write_json(404, {"ok": False, "error": "not found"})
                 return
-            self._run_command(getattr(keeper, method_name))
+            self._skip_access_log = True
+            self._log_access(200)
+            try:
+                self._run_command(getattr(keeper, method_name))
+            finally:
+                self._skip_access_log = False
 
         def do_PUT(self) -> None:
             self._method_not_allowed()
@@ -57,6 +62,11 @@ def make_handler(keeper) -> type[BaseHTTPRequestHandler]:
 
         def log_message(self, fmt: str, *args) -> None:
             LOG.info("%s - %s", self.address_string(), fmt % args)
+
+        def log_request(self, code: str | int = "-", size: str | int = "-") -> None:
+            if getattr(self, "_skip_access_log", False):
+                return
+            super().log_request(code, size)
 
         def _method_not_allowed(self) -> None:
             self._write_json(405, {"ok": False, "error": "method not allowed"})
@@ -75,5 +85,16 @@ def make_handler(keeper) -> type[BaseHTTPRequestHandler]:
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def _log_access(self, code: str | int, size: str | int = "-") -> None:
+            LOG.info(
+                '%s - "%s %s %s" %s %s',
+                self.address_string(),
+                self.command,
+                self.path,
+                self.request_version,
+                code,
+                size,
+            )
 
     return WhiteNoiseKeeperHandler
