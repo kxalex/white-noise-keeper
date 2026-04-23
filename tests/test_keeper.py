@@ -164,9 +164,11 @@ class KeeperTest(unittest.TestCase):
         )
         keeper = build_keeper(cast=cast, state_store=state_store)
 
-        result = keeper.run_once()
+        with self.assertLogs("white_noise_keeper.keeper", level="INFO") as logs:
+            result = keeper.run_once()
 
         self.assertTrue(result.healthy)
+        self.assertIn("Cast restore succeeded; connection recovered", "\n".join(logs.output))
         self.assertEqual(
             cast.actions,
             [

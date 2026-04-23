@@ -98,6 +98,7 @@ class WhiteNoiseKeeper:
                     )
                 try:
                     current = self.playback.restore_snapshot(snapshot)
+                    LOG.info("Cast restore succeeded; connection recovered")
                 except Exception:
                     LOG.warning("Cast restore failed; retrying")
                     LOG.debug("Cast restore error", exc_info=True)
@@ -112,6 +113,7 @@ class WhiteNoiseKeeper:
                     LOG.info("Cast media differs; restoring last successful media state")
                     try:
                         current = self.playback.restore_snapshot(snapshot)
+                        LOG.info("Cast restore succeeded; connection recovered")
                     except Exception:
                         LOG.warning("Cast restore failed; retrying")
                         LOG.debug("Cast restore error", exc_info=True)
