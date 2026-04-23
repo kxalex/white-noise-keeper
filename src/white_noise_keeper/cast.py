@@ -14,6 +14,7 @@ VOLUME_CONFIRM_INTERVAL_SECONDS = 0.05
 MEDIA_LOAD_CONFIRM_TIMEOUT_SECONDS = 5.0
 MEDIA_LOAD_CONFIRM_INTERVAL_SECONDS = 0.1
 MEDIA_STATUS_REFRESH_TIMEOUT_SECONDS = 2.0
+CAST_DISCONNECT_TIMEOUT_SECONDS = 1.0
 
 
 PLAYER_PLAYING = "PLAYING"
@@ -149,15 +150,28 @@ class PyChromecastClient:
         LOG.info("Muted state is %s", muted)
 
     def close(self) -> None:
-        if self._browser is not None:
+        cast = self._cast
+        browser = self._browser
+        self._cast = None
+        self._browser = None
+
+        if cast is not None:
+            disconnect = getattr(cast, "disconnect", None)
+            if callable(disconnect):
+                try:
+                    disconnect(timeout=CAST_DISCONNECT_TIMEOUT_SECONDS)
+                except Exception as exc:  # pragma: no cover - best effort teardown
+                    LOG.debug("Chromecast disconnect failed during close: %s", exc)
+
+        if browser is not None:
             try:
-                self._browser.stop_discovery()
+                browser.stop_discovery()
             except AttributeError:
                 import pychromecast
 
-                pychromecast.discovery.stop_discovery(self._browser)
-        self._browser = None
-        self._cast = None
+                pychromecast.discovery.stop_discovery(browser)
+            except Exception as exc:  # pragma: no cover - best effort teardown
+                LOG.debug("Chromecast discovery stop failed during close: %s", exc)
 
     def reset(self) -> None:
         LOG.info("Resetting Chromecast connection")

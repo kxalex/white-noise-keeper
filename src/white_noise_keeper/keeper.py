@@ -86,19 +86,24 @@ class WhiteNoiseKeeper:
                 return KeeperResult(healthy=False, message="Cast mute restore pending")
             try:
                 current = self.playback.current_state()
-            except Exception as exc:
-                LOG.warning("Cast health check failed: %s", exc)
+            except Exception:
+                LOG.warning("Cast health check failed; resetting Chromecast connection")
+                LOG.debug("Cast health check error", exc_info=True)
                 self.cast.reset()
                 snapshot = self._saved_media_snapshot()
                 if snapshot is None:
-                    return KeeperResult(healthy=False, message=f"Cast unavailable: {exc}")
-                try:
-                    current = self.playback.restore_snapshot(snapshot)
-                except Exception as restore_exc:
-                    LOG.warning("Cast restore failed: %s", restore_exc)
                     return KeeperResult(
                         healthy=False,
-                        message=f"Cast restore failed: {restore_exc}",
+                        message="Nest unavailable; retrying",
+                    )
+                try:
+                    current = self.playback.restore_snapshot(snapshot)
+                except Exception:
+                    LOG.warning("Cast restore failed; retrying")
+                    LOG.debug("Cast restore error", exc_info=True)
+                    return KeeperResult(
+                        healthy=False,
+                        message="Nest restore failed; retrying",
                     )
 
             if current.content_id != self.config.cast.url:
@@ -107,11 +112,12 @@ class WhiteNoiseKeeper:
                     LOG.info("Cast media differs; restoring last successful media state")
                     try:
                         current = self.playback.restore_snapshot(snapshot)
-                    except Exception as restore_exc:
-                        LOG.warning("Cast restore failed: %s", restore_exc)
+                    except Exception:
+                        LOG.warning("Cast restore failed; retrying")
+                        LOG.debug("Cast restore error", exc_info=True)
                         return KeeperResult(
                             healthy=False,
-                            message=f"Cast restore failed: {restore_exc}",
+                            message="Nest restore failed; retrying",
                         )
                 else:
                     LOG.info(
@@ -119,11 +125,12 @@ class WhiteNoiseKeeper:
                     )
                     try:
                         current = self.playback.ensure_loaded(autoplay=False)
-                    except Exception as load_exc:
-                        LOG.warning("Cast preload failed: %s", load_exc)
+                    except Exception:
+                        LOG.warning("Cast preload failed; retrying")
+                        LOG.debug("Cast preload error", exc_info=True)
                         return KeeperResult(
                             healthy=False,
-                            message=f"Cast preload failed: {load_exc}",
+                            message="Nest unavailable; retrying",
                         )
 
             self._store_cast_state(current)

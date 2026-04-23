@@ -64,13 +64,20 @@ class CastMediaTest(unittest.TestCase):
         client = PyChromecastClient(
             CastConfig(name="Example", url="http://example.local/white-noise.mp4")
         )
-        client._cast = SimpleNamespace()
+        cast = SimpleNamespace(actions=[])
+
+        def disconnect(timeout=None):
+            cast.actions.append(("disconnect", timeout))
+
+        cast.disconnect = disconnect
+        client._cast = cast
         client._browser = browser
 
         client.reset()
 
         self.assertIsNone(client._cast)
         self.assertIsNone(client._browser)
+        self.assertEqual(cast.actions, [("disconnect", 1.0)])
         self.assertEqual(browser.actions, [("stop_discovery",)])
 
     def test_pause_uses_media_controller_pause(self):

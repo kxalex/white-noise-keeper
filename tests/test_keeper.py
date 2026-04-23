@@ -185,6 +185,7 @@ class KeeperTest(unittest.TestCase):
         result = keeper.run_once()
 
         self.assertFalse(result.healthy)
+        self.assertEqual(result.message, "Nest unavailable; retrying")
         self.assertEqual(cast.actions, [("reset",)])
 
     def test_status_snapshot_returns_last_published_state(self):
