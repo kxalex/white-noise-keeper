@@ -62,12 +62,16 @@ class WhiteNoiseKeeper:
             daemon=True,
         ).start()
         failure_count = 0
+        startup_logged = False
         while True:
             try:
                 result = self.run_once()
             except Exception as exc:  # pragma: no cover - defensive runtime guard
                 LOG.exception("Keeper loop failed")
                 result = KeeperResult(healthy=False, message=f"Keeper loop failed: {exc}")
+            if not startup_logged:
+                LOG.info("Startup Nest status: %s", result.message)
+                startup_logged = True
             self.notifier.status(result.message)
             if result.healthy:
                 failure_count = 0
