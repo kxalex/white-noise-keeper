@@ -34,6 +34,7 @@ class FakeCast:
         self,
         state=None,
         fail_get_state_times=0,
+        fail_get_state_call_numbers=None,
         fail_set_muted_to=None,
     ):
         self.state = state or cast_state(
@@ -41,10 +42,15 @@ class FakeCast:
             player_state=PLAYER_PLAYING,
         )
         self.fail_get_state_times = fail_get_state_times
+        self.fail_get_state_call_numbers = set(fail_get_state_call_numbers or [])
         self.fail_set_muted_to = fail_set_muted_to
         self.actions = []
+        self.get_state_calls = 0
 
     def get_state(self):
+        self.get_state_calls += 1
+        if self.get_state_calls in self.fail_get_state_call_numbers:
+            raise RuntimeError("cast unavailable")
         if self.fail_get_state_times > 0:
             self.fail_get_state_times -= 1
             raise RuntimeError("cast unavailable")
@@ -175,10 +181,42 @@ class KeeperTest(unittest.TestCase):
                 ("reset",),
                 ("set_muted", True),
                 ("load", True),
-                ("set_muted", True),
             ],
         )
         self.assertEqual(keeper.state.last_cast_state, snapshot_from_cast_state(cast.state))
+
+    def test_restore_snapshot_keeps_device_muted_until_final_state_check(self):
+        cast = FakeCast(
+            cast_state(
+                content_id="http://example.local/manual.mp4",
+                player_state=PLAYER_PLAYING,
+                volume_muted=False,
+            ),
+            fail_get_state_call_numbers={3},
+        )
+        keeper = build_keeper(
+            cast=cast,
+            state_store=InMemoryStateStore(
+                RuntimeState(
+                    last_cast_state=snapshot(
+                        content_id=EXPECTED_URL,
+                        player_state=PLAYER_PAUSED,
+                        volume_muted=False,
+                    )
+                )
+            ),
+        )
+
+        result = keeper.run_once()
+
+        self.assertFalse(result.healthy)
+        self.assertEqual(
+            cast.actions,
+            [
+                ("set_muted", True),
+                ("load", False),
+            ],
+        )
 
     def test_run_once_resets_cast_after_health_check_failure_without_state(self):
         cast = FakeCast(fail_get_state_times=1)
@@ -241,7 +279,6 @@ class KeeperTest(unittest.TestCase):
             [
                 ("set_muted", True),
                 ("load", True),
-                ("set_muted", True),
             ],
         )
         self.assertEqual(keeper.state.last_cast_state, snapshot_from_cast_state(cast.state))
