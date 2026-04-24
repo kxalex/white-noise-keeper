@@ -243,7 +243,6 @@ class PlaybackTest(unittest.TestCase):
                 ("set_muted", True),
                 ("load", True),
                 ("sleep", MUTE_AFTER_LOAD_DELAY_SECONDS),
-                ("set_muted", True),
             ],
         )
         self.assertTrue(restored.volume_muted)
