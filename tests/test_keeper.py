@@ -29,6 +29,17 @@ class InMemoryStateStore:
         self.saved += 1
 
 
+class MutableClock:
+    def __init__(self, now):
+        self.now = now
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
 class FakeCast:
     def __init__(
         self,
@@ -186,6 +197,7 @@ class KeeperTest(unittest.TestCase):
         self.assertEqual(keeper.state.last_cast_state, snapshot_from_cast_state(cast.state))
 
     def test_restore_snapshot_keeps_device_muted_until_final_state_check(self):
+        clock = MutableClock(100.0)
         cast = FakeCast(
             cast_state(
                 content_id="http://example.local/manual.mp4",
@@ -205,6 +217,7 @@ class KeeperTest(unittest.TestCase):
                     )
                 )
             ),
+            clock=clock,
         )
 
         result = keeper.run_once()
@@ -217,16 +230,39 @@ class KeeperTest(unittest.TestCase):
                 ("load", False),
             ],
         )
+        self.assertEqual(keeper.state.stats["open_outage"]["started_at"], 100.0)
+        self.assertEqual(keeper.state.stats["failure_records"], [])
+
+        clock.advance(15.0)
+        result = keeper.run_once()
+
+        self.assertTrue(result.healthy)
+        self.assertEqual(len(keeper.state.stats["failure_records"]), 1)
+        self.assertIsNone(keeper.state.stats["open_outage"])
+        self.assertEqual(keeper.state.stats["failure_records"][0]["duration_seconds"], 15.0)
 
     def test_run_once_resets_cast_after_health_check_failure_without_state(self):
+        clock = MutableClock(100.0)
         cast = FakeCast(fail_get_state_times=1)
-        keeper = build_keeper(cast=cast, state_store=InMemoryStateStore())
+        keeper = build_keeper(cast=cast, state_store=InMemoryStateStore(), clock=clock)
 
         result = keeper.run_once()
 
         self.assertFalse(result.healthy)
         self.assertEqual(result.message, "Nest unavailable; retrying")
         self.assertEqual(cast.actions, [("reset",)])
+        self.assertEqual(keeper.state.stats["open_outage"]["started_at"], 100.0)
+        self.assertEqual(keeper.state.stats["failure_records"], [])
+
+        clock.advance(60.0)
+        result = keeper.run_once()
+
+        self.assertTrue(result.healthy)
+        self.assertEqual(len(keeper.state.stats["failure_records"]), 1)
+        self.assertIsNone(keeper.state.stats["open_outage"])
+        self.assertEqual(keeper.state.stats["failure_records"][0]["started_at"], 100.0)
+        self.assertEqual(keeper.state.stats["failure_records"][0]["ended_at"], 160.0)
+        self.assertEqual(keeper.state.stats["failure_records"][0]["duration_seconds"], 60.0)
 
     def test_status_snapshot_returns_last_published_state(self):
         keeper = build_keeper(

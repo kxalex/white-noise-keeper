@@ -17,6 +17,20 @@ class FakeKeeper:
             "last_cast_state": {"player_state": "PAUSED"},
         }
 
+    def stats_snapshot(self):
+        self.calls.append("stats")
+        return {
+            "ok": True,
+            "daily": {
+                "bucket_start": 100.0,
+                "bucket_end": 200.0,
+                "count": 2,
+                "total_seconds": 30.0,
+            },
+            "open_outage": {"started_at": 150.0, "reason": "nest_unavailable"},
+            "failure_records": [],
+        }
+
     def command_start(self):
         self.calls.append("start")
         return {"ok": True, "last_command": {"action": "start"}}
@@ -42,6 +56,15 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(response["ok"])
         self.assertEqual(response["last_cast_state"]["player_state"], "PAUSED")
         self.assertEqual(self.keeper.calls, ["status"])
+
+    def test_stats_endpoint_returns_failure_history(self):
+        response = self.get("/v1/stats")
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["daily"]["count"], 2)
+        self.assertEqual(response["daily"]["total_seconds"], 30.0)
+        self.assertEqual(response["open_outage"]["reason"], "nest_unavailable")
+        self.assertEqual(self.keeper.calls, ["stats"])
 
     def test_action_endpoints_call_matching_keeper_commands(self):
         actions = ["start", "stop"]

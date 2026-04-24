@@ -31,13 +31,16 @@ def make_handler(keeper) -> type[BaseHTTPRequestHandler]:
         server_version = "WhiteNoiseKeeperHTTP/0.1"
 
         def do_GET(self) -> None:
-            if self.path != "/v1/status":
-                if self.path in ACTION_METHODS:
-                    self._write_json(405, {"ok": False, "error": "method not allowed"})
-                    return
-                self._write_json(404, {"ok": False, "error": "not found"})
+            if self.path == "/v1/status":
+                self._run_command(keeper.status_snapshot)
                 return
-            self._run_command(keeper.status_snapshot)
+            if self.path == "/v1/stats":
+                self._run_command(keeper.stats_snapshot)
+                return
+            if self.path in ACTION_METHODS:
+                self._write_json(405, {"ok": False, "error": "method not allowed"})
+                return
+            self._write_json(404, {"ok": False, "error": "not found"})
 
         def do_POST(self) -> None:
             method_name = ACTION_METHODS.get(self.path)

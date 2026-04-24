@@ -24,6 +24,40 @@ class StateStoreTest(unittest.TestCase):
 
         self.assertEqual(state.last_cast_state, snapshot)
 
+    def test_stats_round_trip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "state.json"
+            store = StateStore(state_path)
+            stats = {
+                "open_outage": {"started_at": 100.0, "reason": "nest_unavailable"},
+                "failure_records": [
+                    {
+                        "started_at": 10.0,
+                        "ended_at": 20.0,
+                        "reason": "nest_unavailable",
+                        "duration_seconds": 10.0,
+                    }
+                ],
+            }
+
+            store.save(RuntimeState(stats=stats))
+            state = store.load()
+
+        self.assertEqual(state.stats, stats)
+
+    def test_loads_state_without_stats(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "state.json"
+            state_path.write_text(
+                "{\n  \"last_cast_state\": {\"player_state\": \"PLAYING\"}\n}\n",
+                encoding="utf-8",
+            )
+            store = StateStore(state_path)
+
+            state = store.load()
+
+        self.assertIsNone(state.stats)
+
     def test_save_skips_unchanged_state(self):
         with tempfile.TemporaryDirectory() as directory:
             state_path = Path(directory) / "state.json"

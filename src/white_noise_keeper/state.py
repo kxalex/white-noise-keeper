@@ -12,6 +12,7 @@ LOG = logging.getLogger(__name__)
 class RuntimeState:
     last_cast_state: dict | None = None
     last_command: dict | None = None
+    stats: dict | None = None
 
 
 class StateStore:
@@ -33,6 +34,7 @@ class StateStore:
         state = RuntimeState(
             last_cast_state=_optional_dict(data.get("last_cast_state")),
             last_command=_optional_dict(data.get("last_command")),
+            stats=_optional_dict(data.get("stats")),
         )
         self._last_serialized = self._serialize(state)
         return state
@@ -53,6 +55,7 @@ class StateStore:
         data = {
             "last_cast_state": state.last_cast_state,
             "last_command": state.last_command,
+            "stats": state.stats,
         }
         return json.dumps(data, indent=2, sort_keys=True) + "\n"
 

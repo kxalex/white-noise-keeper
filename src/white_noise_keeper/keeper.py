@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import datetime
 import logging
 import threading
@@ -9,6 +10,7 @@ from dataclasses import dataclass
 from .cast import CastClient, CastState
 from .config import AppConfig
 from .playback import WhiteNoisePlayback
+from .stats import close_outage, normalize_stats, snapshot_stats, start_outage
 from .state import RuntimeState, StateStore
 from .systemd import SystemdNotifier, start_watchdog_heartbeat
 
@@ -36,6 +38,7 @@ class WhiteNoiseKeeper:
         self.notifier = notifier or SystemdNotifier()
         self.clock = clock
         self.state = state_store.load()
+        self._ensure_stats_state()
         self._published_state = _copy_runtime_state(self.state)
         self.playback = WhiteNoisePlayback(
             cast_client,
@@ -86,6 +89,7 @@ class WhiteNoiseKeeper:
 
     def run_once(self) -> KeeperResult:
         with self._lock:
+            self._ensure_stats_state()
             if not self.playback.restore_pending() and self.playback.has_pending_restore():
                 return KeeperResult(healthy=False, message="Cast mute restore pending")
             try:
@@ -96,6 +100,7 @@ class WhiteNoiseKeeper:
                 self.cast.reset()
                 snapshot = self._saved_media_snapshot()
                 if snapshot is None:
+                    self._record_outage_start_and_persist()
                     return KeeperResult(
                         healthy=False,
                         message="Nest unavailable; retrying",
@@ -106,6 +111,7 @@ class WhiteNoiseKeeper:
                 except Exception:
                     LOG.warning("Cast restore failed; retrying")
                     LOG.debug("Cast restore error", exc_info=True)
+                    self._record_outage_start_and_persist()
                     return KeeperResult(
                         healthy=False,
                         message="Nest restore failed; retrying",
@@ -121,6 +127,7 @@ class WhiteNoiseKeeper:
                     except Exception:
                         LOG.warning("Cast restore failed; retrying")
                         LOG.debug("Cast restore error", exc_info=True)
+                        self._record_outage_start_and_persist()
                         return KeeperResult(
                             healthy=False,
                             message="Nest restore failed; retrying",
@@ -134,14 +141,15 @@ class WhiteNoiseKeeper:
                     except Exception:
                         LOG.warning("Cast preload failed; retrying")
                         LOG.debug("Cast preload error", exc_info=True)
+                        self._record_outage_start_and_persist()
                         return KeeperResult(
                             healthy=False,
                             message="Nest unavailable; retrying",
                         )
 
+            self._record_outage_end()
             self._store_cast_state(current)
-            self.state_store.save(self.state)
-            self._publish_state()
+            self._persist_state()
             return KeeperResult(healthy=True, message=_state_message(current))
 
     def command_start(self) -> dict:
@@ -157,16 +165,24 @@ class WhiteNoiseKeeper:
             "last_cast_state": _copy_optional_dict(self._published_state.last_cast_state),
         }
 
+    def stats_snapshot(self) -> dict:
+        with self._lock:
+            self._ensure_stats_state()
+            return {
+                "ok": True,
+                **snapshot_stats(self.state.stats, self.clock()),
+            }
+
     def _run_command(self, action: str, runner) -> dict:
         with self._lock:
+            self._ensure_stats_state()
             if not self.playback.restore_pending() and self.playback.has_pending_restore():
                 raise RuntimeError("Cast mute restore pending")
             runner()
             current = self.playback.current_state()
             self._store_cast_state(current)
             self._record_command(action)
-            self.state_store.save(self.state)
-            self._publish_state()
+            self._persist_state()
             return {
                 "ok": True,
                 "last_command": self.state.last_command,
@@ -201,6 +217,25 @@ class WhiteNoiseKeeper:
 
     def _publish_state(self) -> None:
         self._published_state = _copy_runtime_state(self.state)
+
+    def _persist_state(self) -> None:
+        self.state_store.save(self.state)
+        self._publish_state()
+
+    def _ensure_stats_state(self) -> None:
+        self.state.stats = normalize_stats(self.state.stats, self.clock())
+
+    def _record_outage_start(self) -> None:
+        self._ensure_stats_state()
+        start_outage(self.state.stats, self.clock())
+
+    def _record_outage_start_and_persist(self) -> None:
+        self._record_outage_start()
+        self._persist_state()
+
+    def _record_outage_end(self) -> None:
+        self._ensure_stats_state()
+        close_outage(self.state.stats, self.clock())
 
     def _saved_media_snapshot(self) -> dict | None:
         snapshot = self.state.last_cast_state
@@ -241,6 +276,7 @@ def _copy_runtime_state(state: RuntimeState) -> RuntimeState:
     return RuntimeState(
         last_cast_state=_copy_optional_dict(state.last_cast_state),
         last_command=_copy_optional_dict(state.last_command),
+        stats=_copy_optional_dict(state.stats),
     )
 
 
@@ -255,4 +291,4 @@ def _seconds_until_next_eight_pm(now_seconds: float) -> float:
 def _copy_optional_dict(value: dict | None) -> dict | None:
     if value is None:
         return None
-    return dict(value)
+    return copy.deepcopy(value)
