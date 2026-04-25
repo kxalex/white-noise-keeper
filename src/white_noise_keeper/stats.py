@@ -74,6 +74,55 @@ def snapshot_stats(stats: dict | None, now_seconds: float) -> dict:
     }
 
 
+def render_stats_table(snapshot: dict, now_seconds: float) -> str:
+    daily = snapshot["daily"]
+    lines = [
+        f"Bucket start: {_format_local_timestamp(daily['bucket_start'])}",
+        f"Bucket end:   {_format_local_timestamp(daily['bucket_end'])}",
+        f"Count:        {daily['count']}",
+        f"Total down:   {_format_duration(daily['total_seconds'])}",
+        "",
+    ]
+
+    rows: list[dict[str, str]] = []
+    for record in snapshot["failure_records"]:
+        rows.append(
+            {
+                "status": "closed",
+                "started_at": _format_local_timestamp(record["started_at"]),
+                "ended_at": _format_local_timestamp(record["ended_at"]),
+                "down_for": _format_duration(record["duration_seconds"]),
+            }
+        )
+
+    outage = snapshot.get("open_outage")
+    if outage is not None:
+        rows.append(
+            {
+                "status": "open",
+                "started_at": _format_local_timestamp(outage["started_at"]),
+                "ended_at": "ONGOING",
+                "down_for": _format_duration(max(0.0, now_seconds - outage["started_at"])),
+            }
+        )
+
+    if not rows:
+        lines.append("No outages recorded.")
+        return "\n".join(lines)
+
+    headers = ("status", "started_at", "ended_at", "down_for")
+    widths = {
+        header: max(len(header), *(len(row[header]) for row in rows))
+        for header in headers
+    }
+    header_line = "  ".join(header.ljust(widths[header]) for header in headers)
+    separator_line = "  ".join("-" * widths[header] for header in headers)
+    lines.extend([header_line, separator_line])
+    for row in rows:
+        lines.append("  ".join(row[header].ljust(widths[header]) for header in headers))
+    return "\n".join(lines)
+
+
 def current_bucket_bounds(now_seconds: float) -> tuple[float, float]:
     now = datetime.datetime.fromtimestamp(now_seconds)
     bucket_start = now.replace(hour=12, minute=0, second=0, microsecond=0)
@@ -181,3 +230,21 @@ def _coerce_float(value, default: float | None = None) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _format_local_timestamp(seconds: float) -> str:
+    local_dt = datetime.datetime.fromtimestamp(seconds).astimezone()
+    return local_dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
+def _format_duration(total_seconds: float) -> str:
+    rounded_seconds = int(round(max(0.0, total_seconds)))
+    hours, remainder = divmod(rounded_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    parts: list[str] = []
+    if hours:
+        parts.append(f"{hours}h")
+    if hours or minutes:
+        parts.append(f"{minutes}m")
+    parts.append(f"{seconds}s")
+    return " ".join(parts)

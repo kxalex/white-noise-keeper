@@ -58,12 +58,32 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(self.keeper.calls, ["status"])
 
     def test_stats_endpoint_returns_failure_history(self):
-        response = self.get("/v1/stats")
+        response = self.get("/v1/stats", headers={"Accept": "application/json"})
 
         self.assertTrue(response["ok"])
         self.assertEqual(response["daily"]["count"], 2)
         self.assertEqual(response["daily"]["total_seconds"], 30.0)
         self.assertEqual(response["open_outage"]["reason"], "nest_unavailable")
+        self.assertEqual(self.keeper.calls, ["stats"])
+
+    def test_stats_endpoint_defaults_to_table(self):
+        body, content_type = self.get_raw("/v1/stats")
+
+        self.assertEqual(content_type, "text/plain; charset=utf-8")
+        self.assertIn("status", body)
+        self.assertIn("down_for", body)
+        self.assertIn("ONGOING", body)
+        self.assertEqual(self.keeper.calls, ["stats"])
+
+    def test_stats_endpoint_renders_table_for_text_accept(self):
+        body, content_type = self.get_raw(
+            "/v1/stats",
+            headers={"Accept": "text/plain"},
+        )
+
+        self.assertEqual(content_type, "text/plain; charset=utf-8")
+        self.assertIn("status", body)
+        self.assertIn("down_for", body)
         self.assertEqual(self.keeper.calls, ["stats"])
 
     def test_action_endpoints_call_matching_keeper_commands(self):
@@ -89,9 +109,15 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(error.exception.code, 405)
         self.assertFalse(json.loads(error.exception.read())["ok"])
 
-    def get(self, path):
-        with urlopen(self.base_url + path, timeout=5) as response:
+    def get(self, path, headers=None):
+        request = Request(self.base_url + path, headers=headers or {})
+        with urlopen(request, timeout=5) as response:
             return json.loads(response.read())
+
+    def get_raw(self, path, headers=None):
+        request = Request(self.base_url + path, headers=headers or {})
+        with urlopen(request, timeout=5) as response:
+            return response.read().decode("utf-8"), response.headers["Content-Type"]
 
     def post(self, path):
         request = Request(self.base_url + path, method="POST")

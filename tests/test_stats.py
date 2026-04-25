@@ -4,6 +4,7 @@ import unittest
 from white_noise_keeper.stats import (
     current_bucket_bounds,
     normalize_stats,
+    render_stats_table,
     snapshot_stats,
 )
 
@@ -94,6 +95,35 @@ class StatsTest(unittest.TestCase):
         self.assertEqual(snapshot["daily"]["total_seconds"], 2400.0)
         self.assertEqual(len(snapshot["failure_records"]), 2)
         self.assertEqual(snapshot["open_outage"]["reason"], "nest_unavailable")
+
+    def test_render_stats_table_formats_local_dates_and_duration_column(self):
+        now = datetime.datetime(2026, 4, 24, 13, 30, 0).timestamp()
+        snapshot = snapshot_stats(
+            {
+                "open_outage": {
+                    "started_at": datetime.datetime(2026, 4, 24, 13, 0, 0).timestamp(),
+                    "reason": "nest_unavailable",
+                },
+                "failure_records": [
+                    {
+                        "started_at": datetime.datetime(2026, 4, 24, 12, 10, 0).timestamp(),
+                        "ended_at": datetime.datetime(2026, 4, 24, 12, 12, 5).timestamp(),
+                        "reason": "nest_unavailable",
+                        "duration_seconds": 125.0,
+                    },
+                ],
+            },
+            now,
+        )
+
+        table = render_stats_table(snapshot, now)
+
+        self.assertIn("status", table)
+        self.assertIn("down_for", table)
+        self.assertIn("2026-04-24 12:10:00", table)
+        self.assertIn("2m 5s", table)
+        self.assertIn("30m 0s", table)
+        self.assertIn("ONGOING", table)
 
 
 if __name__ == "__main__":
