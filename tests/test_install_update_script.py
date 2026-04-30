@@ -1,6 +1,7 @@
 import os
 import stat
 import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -127,7 +128,7 @@ EOF
                     "REPO_DIR": str(REPO_DIR),
                     "UPDATE_BIN": str(update_bin),
                     "STATE_FILE": str(state_file),
-                    "PYTHON_BIN": str(REPO_DIR / ".venv" / "bin" / "python"),
+                    "PYTHON_BIN": sys.executable,
                     "UV_BIN": str(bin_dir / "uv"),
                     "VENV_DIR": str(venv_dir),
                 }
