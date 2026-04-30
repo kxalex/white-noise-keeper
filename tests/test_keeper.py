@@ -196,6 +196,36 @@ class KeeperTest(unittest.TestCase):
         )
         self.assertEqual(keeper.state.last_cast_state, snapshot_from_cast_state(cast.state))
 
+    def test_run_once_logs_restore_failure_cause_and_traceback(self):
+        cast = FakeCast(
+            state=cast_state(
+                content_id="http://example.local/manual.mp4",
+                player_state=PLAYER_PAUSED,
+                volume_muted=False,
+            ),
+            fail_set_muted_to=False,
+        )
+        state_store = InMemoryStateStore(
+            RuntimeState(
+                last_cast_state=snapshot(
+                    content_id=EXPECTED_URL,
+                    player_state=PLAYER_PAUSED,
+                    volume_muted=False,
+                )
+            )
+        )
+        keeper = build_keeper(cast=cast, state_store=state_store)
+
+        with self.assertLogs("white_noise_keeper.keeper", level="WARNING") as logs:
+            result = keeper.run_once()
+
+        joined_logs = "\n".join(logs.output)
+        self.assertFalse(result.healthy)
+        self.assertEqual(result.message, "Nest restore failed; retrying")
+        self.assertIn("Cast restore failed; retrying: Chromecast restore failed", joined_logs)
+        self.assertIn("RuntimeError: Chromecast restore failed", joined_logs)
+        self.assertIn("RuntimeError: Chromecast mute restore failed", joined_logs)
+
     def test_restore_snapshot_keeps_device_muted_until_final_state_check(self):
         clock = MutableClock(100.0)
         cast = FakeCast(
@@ -343,6 +373,26 @@ class KeeperTest(unittest.TestCase):
         )
         self.assertEqual(keeper.state.last_cast_state, snapshot_from_cast_state(cast.state))
         self.assertEqual(keeper.state.last_cast_state["player_state"], PLAYER_PAUSED)
+
+    def test_run_once_logs_preload_failure_cause_and_traceback(self):
+        cast = FakeCast(
+            cast_state(
+                content_id=None,
+                player_state=None,
+                volume_muted=False,
+            ),
+            fail_set_muted_to=False,
+        )
+        keeper = build_keeper(cast=cast, state_store=InMemoryStateStore())
+
+        with self.assertLogs("white_noise_keeper.keeper", level="WARNING") as logs:
+            result = keeper.run_once()
+
+        joined_logs = "\n".join(logs.output)
+        self.assertFalse(result.healthy)
+        self.assertEqual(result.message, "Nest unavailable; retrying")
+        self.assertIn("Cast preload failed; retrying: mute restore failed", joined_logs)
+        self.assertIn("RuntimeError: mute restore failed", joined_logs)
 
     def test_start_records_exact_state_and_command_name(self):
         cast = FakeCast(

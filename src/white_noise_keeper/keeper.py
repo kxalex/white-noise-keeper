@@ -94,9 +94,11 @@ class WhiteNoiseKeeper:
                 return KeeperResult(healthy=False, message="Cast mute restore pending")
             try:
                 current = self.playback.current_state()
-            except Exception:
-                LOG.warning("Cast health check failed; resetting Chromecast connection")
-                LOG.debug("Cast health check error", exc_info=True)
+            except Exception as exc:
+                _log_exception_with_traceback(
+                    "Cast health check failed; resetting Chromecast connection",
+                    exc,
+                )
                 self.cast.reset()
                 snapshot = self._saved_media_snapshot()
                 if snapshot is None:
@@ -108,9 +110,8 @@ class WhiteNoiseKeeper:
                 try:
                     current = self.playback.restore_snapshot(snapshot)
                     LOG.info("Cast restore succeeded; connection recovered")
-                except Exception:
-                    LOG.warning("Cast restore failed; retrying")
-                    LOG.debug("Cast restore error", exc_info=True)
+                except Exception as exc:
+                    _log_exception_with_traceback("Cast restore failed; retrying", exc)
                     self._record_outage_start_and_persist()
                     return KeeperResult(
                         healthy=False,
@@ -124,9 +125,8 @@ class WhiteNoiseKeeper:
                     try:
                         current = self.playback.restore_snapshot(snapshot)
                         LOG.info("Cast restore succeeded; connection recovered")
-                    except Exception:
-                        LOG.warning("Cast restore failed; retrying")
-                        LOG.debug("Cast restore error", exc_info=True)
+                    except Exception as exc:
+                        _log_exception_with_traceback("Cast restore failed; retrying", exc)
                         self._record_outage_start_and_persist()
                         return KeeperResult(
                             healthy=False,
@@ -138,9 +138,8 @@ class WhiteNoiseKeeper:
                     )
                     try:
                         current = self.playback.ensure_loaded(autoplay=False)
-                    except Exception:
-                        LOG.warning("Cast preload failed; retrying")
-                        LOG.debug("Cast preload error", exc_info=True)
+                    except Exception as exc:
+                        _log_exception_with_traceback("Cast preload failed; retrying", exc)
                         self._record_outage_start_and_persist()
                         return KeeperResult(
                             healthy=False,
@@ -292,3 +291,7 @@ def _copy_optional_dict(value: dict | None) -> dict | None:
     if value is None:
         return None
     return copy.deepcopy(value)
+
+
+def _log_exception_with_traceback(message: str, exc: Exception) -> None:
+    LOG.warning("%s: %s", message, exc, exc_info=exc)

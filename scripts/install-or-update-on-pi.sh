@@ -14,14 +14,16 @@ RUN_TESTS="${RUN_TESTS:-1}"
 START_SERVICE="${START_SERVICE:-1}"
 UV_INSTALL_URL="${UV_INSTALL_URL:-https://astral.sh/uv/install.sh}"
 FRESH_INSTALL=0
+RESET_STATE=0
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [--fresh] [--help]
+Usage: $(basename "$0") [--fresh] [--reset-state] [--help]
 
 Options:
-  --fresh  Replace the Python virtual environment before installing.
-  --help   Show this help.
+  --fresh        Replace the Python virtual environment before installing.
+  --reset-state  Delete saved runtime state and stats before restart.
+  --help         Show this help.
 EOF
 }
 
@@ -29,6 +31,9 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --fresh)
       FRESH_INSTALL=1
+      ;;
+    --reset-state)
+      RESET_STATE=1
       ;;
     --help)
       usage
@@ -118,8 +123,12 @@ if [ "$RUN_TESTS" = "1" ]; then
   "$VENV_DIR/bin/python" -m unittest discover -s "$REPO_DIR/tests" -v
 fi
 
-$SUDO rm -f "$STATE_FILE"
-echo "Reset runtime state: $STATE_FILE"
+if [ "$RESET_STATE" = "1" ]; then
+  $SUDO rm -f "$STATE_FILE"
+  echo "Reset runtime state: $STATE_FILE"
+else
+  echo "Preserving runtime state: $STATE_FILE"
+fi
 
 $SUDO systemctl daemon-reload
 $SUDO systemctl enable "$SERVICE"

@@ -43,10 +43,18 @@ update-white-noise-keeper
 
 That command pulls the latest Git changes, reuses the existing virtual environment, reinstalls the package, runs the unit tests, restarts the systemd service, and prints service status.
 
+Normal updates preserve `/var/lib/white-noise-keeper/state.json`, including the last saved cast state and downtime stats.
+
 To replace the virtual environment before installing:
 
 ```sh
 update-white-noise-keeper --fresh
+```
+
+To intentionally wipe saved cast state and stats before restart:
+
+```sh
+update-white-noise-keeper --reset-state
 ```
 
 For a nonstandard checkout path:
