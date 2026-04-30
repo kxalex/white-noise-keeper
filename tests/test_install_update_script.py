@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 
-REPO_DIR = Path("/Users/kxalex/Projects/white-noise-keeper")
+REPO_DIR = Path(__file__).resolve().parent.parent
 SCRIPT_PATH = REPO_DIR / "scripts" / "install-or-update-on-pi.sh"
 
 
