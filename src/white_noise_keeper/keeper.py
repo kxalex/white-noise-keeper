@@ -121,7 +121,11 @@ class WhiteNoiseKeeper:
             if current.content_id != self.config.cast.url:
                 snapshot = self._saved_media_snapshot()
                 if snapshot is not None:
-                    LOG.info("Cast media differs; restoring last successful media state")
+                    LOG.info(
+                        "Cast media differs; current media: %s",
+                        _format_current_media(current),
+                    )
+                    LOG.info("Restoring last successful media state")
                     try:
                         current = self.playback.restore_snapshot(snapshot)
                         LOG.info("Cast restore succeeded; connection recovered")
@@ -295,3 +299,11 @@ def _copy_optional_dict(value: dict | None) -> dict | None:
 
 def _log_exception_with_traceback(message: str, exc: Exception) -> None:
     LOG.warning("%s: %s", message, exc, exc_info=exc)
+
+
+def _format_current_media(state: CastState) -> str:
+    if state.content_id is None:
+        return "Idle"
+    if state.player_state is None:
+        return state.content_id
+    return f"{state.content_id} ({state.player_state})"

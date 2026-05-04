@@ -163,6 +163,36 @@ class KeeperTest(unittest.TestCase):
         self.assertEqual(keeper.state.last_cast_state["content_id"], EXPECTED_URL)
         self.assertEqual(keeper.state.last_cast_state["player_state"], PLAYER_PAUSED)
 
+    def test_run_once_logs_current_media_before_restoring_snapshot(self):
+        cast = FakeCast(
+            cast_state(
+                content_id="http://example.local/manual.mp4",
+                player_state=PLAYER_PLAYING,
+                volume_muted=True,
+            )
+        )
+        state_store = InMemoryStateStore(
+            RuntimeState(
+                last_cast_state=snapshot(
+                    content_id=EXPECTED_URL,
+                    player_state=PLAYER_PAUSED,
+                    volume_muted=False,
+                )
+            )
+        )
+        keeper = build_keeper(cast=cast, state_store=state_store)
+
+        with self.assertLogs("white_noise_keeper.keeper", level="INFO") as logs:
+            result = keeper.run_once()
+
+        joined_logs = "\n".join(logs.output)
+        self.assertTrue(result.healthy)
+        self.assertIn(
+            "Cast media differs; current media: http://example.local/manual.mp4 (PLAYING)",
+            joined_logs,
+        )
+        self.assertIn("Restoring last successful media state", joined_logs)
+
     def test_run_once_restores_last_successful_state_after_failure(self):
         state = cast_state(
             content_id="http://example.local/other.mp4",

@@ -14,7 +14,7 @@ from .cast import (
 
 LOG = logging.getLogger(__name__)
 MEDIA_END_RELOAD_THRESHOLD_SECONDS = 60.0
-MUTE_AFTER_LOAD_DELAY_SECONDS = 1.0
+MUTE_AFTER_LOAD_DELAY_SECONDS = 2.0
 
 
 class AudioLoadGuard:
