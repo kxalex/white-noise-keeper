@@ -184,7 +184,7 @@ class PyChromecastClient:
 
 
 def expected_media_loaded(state: CastState, expected_url: str) -> bool:
-    return state.content_id == expected_url
+    return state.content_id == expected_url and state.player_state != PLAYER_IDLE
 
 
 def _optional_float(value) -> float | None:

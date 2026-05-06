@@ -7,7 +7,7 @@ import threading
 import time
 from dataclasses import dataclass
 
-from .cast import CastClient, CastState
+from .cast import PLAYER_IDLE, CastClient, CastState
 from .config import AppConfig
 from .playback import WhiteNoisePlayback
 from .stats import close_outage, normalize_stats, snapshot_stats, start_outage
@@ -118,13 +118,19 @@ class WhiteNoiseKeeper:
                         message="Nest restore failed; retrying",
                     )
 
-            if current.content_id != self.config.cast.url:
+            if _needs_media_restore(current, self.config.cast.url):
                 snapshot = self._saved_media_snapshot()
                 if snapshot is not None:
-                    LOG.info(
-                        "Cast media differs; current media: %s",
-                        _format_current_media(current),
-                    )
+                    if current.content_id == self.config.cast.url:
+                        LOG.info(
+                            "Cast media is idle; current media: %s",
+                            _format_current_media(current),
+                        )
+                    else:
+                        LOG.info(
+                            "Cast media differs; current media: %s",
+                            _format_current_media(current),
+                        )
                     LOG.info("Restoring last successful media state")
                     try:
                         current = self.playback.restore_snapshot(snapshot)
@@ -137,9 +143,14 @@ class WhiteNoiseKeeper:
                             message="Nest restore failed; retrying",
                         )
                 else:
-                    LOG.info(
-                        "Cast media differs and no saved state exists; loading paused"
-                    )
+                    if current.content_id == self.config.cast.url:
+                        LOG.info(
+                            "Cast media is idle and no saved state exists; loading paused"
+                        )
+                    else:
+                        LOG.info(
+                            "Cast media differs and no saved state exists; loading paused"
+                        )
                     try:
                         current = self.playback.ensure_loaded(autoplay=False)
                     except Exception as exc:
@@ -217,6 +228,8 @@ class WhiteNoiseKeeper:
         snapshot = self._snapshot(state)
         if snapshot["content_id"] != self.config.cast.url:
             return
+        if snapshot["player_state"] == PLAYER_IDLE:
+            return
         if snapshot != self.state.last_cast_state:
             self.state.last_cast_state = snapshot
 
@@ -282,6 +295,10 @@ def _state_message(state: CastState) -> str:
     if state.playing:
         return "Nest is playing white noise"
     return "Nest is paused"
+
+
+def _needs_media_restore(state: CastState, expected_url: str) -> bool:
+    return state.content_id != expected_url or state.player_state == PLAYER_IDLE
 
 
 def _retry_sleep_seconds(base_interval: float, failure_count: int) -> float:

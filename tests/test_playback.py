@@ -1,6 +1,6 @@
 import unittest
 
-from white_noise_keeper.cast import CastState, PLAYER_PAUSED, PLAYER_PLAYING
+from white_noise_keeper.cast import CastState, PLAYER_IDLE, PLAYER_PAUSED, PLAYER_PLAYING
 from white_noise_keeper.playback import (
     MUTE_AFTER_LOAD_DELAY_SECONDS,
     WhiteNoisePlayback,
@@ -149,6 +149,21 @@ class PlaybackTest(unittest.TestCase):
         self.assertEqual(state.player_state, PLAYER_PAUSED)
         self.assertEqual(cast.actions, muted_load_actions(autoplay=False))
 
+    def test_ensure_loaded_reloads_expected_media_when_player_is_idle(self):
+        cast = FakeCast(
+            cast_state(
+                content_id=EXPECTED_URL,
+                player_state=PLAYER_IDLE,
+                volume_muted=False,
+            )
+        )
+        playback = build_playback(cast)
+
+        state = playback.ensure_loaded(autoplay=True)
+
+        self.assertEqual(state.player_state, PLAYER_PLAYING)
+        self.assertEqual(cast.actions, muted_load_actions(autoplay=True))
+
     def test_ensure_loaded_reloads_near_end_preserving_play_state(self):
         for player_state, autoplay in (
             (PLAYER_PLAYING, True),
@@ -247,6 +262,34 @@ class PlaybackTest(unittest.TestCase):
         )
         self.assertTrue(restored.volume_muted)
         self.assertEqual(restored.content_id, EXPECTED_URL)
+
+    def test_restore_snapshot_reloads_idle_expected_media(self):
+        cast = FakeCast(
+            cast_state(
+                content_id=EXPECTED_URL,
+                player_state=PLAYER_IDLE,
+                volume_muted=True,
+            )
+        )
+        playback = build_playback(cast)
+
+        restored = playback.restore_snapshot(
+            {
+                "content_id": EXPECTED_URL,
+                "player_state": PLAYER_PLAYING,
+                "volume_muted": True,
+            }
+        )
+
+        self.assertEqual(
+            cast.actions,
+            [
+                ("set_muted", True),
+                ("load", True),
+                ("sleep", MUTE_AFTER_LOAD_DELAY_SECONDS),
+            ],
+        )
+        self.assertEqual(restored.player_state, PLAYER_PLAYING)
 
     def test_pause_at_beginning_does_nothing_when_no_media_loaded(self):
         cast = FakeCast(cast_state(content_id=None, player_state=None))

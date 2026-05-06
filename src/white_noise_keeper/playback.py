@@ -8,6 +8,7 @@ from .cast import (
     CastClient,
     CastState,
     PLAYER_BUFFERING,
+    PLAYER_IDLE,
     PLAYER_PLAYING,
     expected_media_loaded,
 )
@@ -166,7 +167,9 @@ class WhiteNoisePlayback:
 
         try:
             state = self._get_state()
-            if desired_url is not None and state.content_id != desired_url:
+            if desired_url is not None and (
+                state.content_id != desired_url or state.player_state == PLAYER_IDLE
+            ):
                 self.audio_load_guard.load(
                     state,
                     autoplay=desired_playing,

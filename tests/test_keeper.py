@@ -417,6 +417,59 @@ class KeeperTest(unittest.TestCase):
         )
         self.assertEqual(keeper.state.last_cast_state, snapshot_from_cast_state(cast.state))
 
+    def test_run_once_reloads_idle_expected_media_from_last_playing_state(self):
+        cast = FakeCast(
+            cast_state(
+                content_id=EXPECTED_URL,
+                player_state=PLAYER_IDLE,
+                current_time=0.0,
+                duration=57600.022,
+                volume_muted=False,
+            )
+        )
+        state_store = InMemoryStateStore(
+            RuntimeState(
+                last_cast_state=snapshot(
+                    content_id=EXPECTED_URL,
+                    player_state=PLAYER_PLAYING,
+                    current_time=622.536131,
+                    duration=57600.022,
+                    volume_muted=True,
+                )
+            )
+        )
+        keeper = build_keeper(cast=cast, state_store=state_store)
+
+        result = keeper.run_once()
+
+        self.assertTrue(result.healthy)
+        self.assertEqual(cast.actions, [("set_muted", True), ("load", True)])
+        self.assertEqual(keeper.state.last_cast_state, snapshot_from_cast_state(cast.state))
+        self.assertEqual(keeper.state.last_cast_state["player_state"], PLAYER_PLAYING)
+
+    def test_run_once_loads_idle_expected_media_paused_without_saved_state(self):
+        cast = FakeCast(
+            cast_state(
+                content_id=EXPECTED_URL,
+                player_state=PLAYER_IDLE,
+                volume_muted=False,
+            )
+        )
+        keeper = build_keeper(cast=cast, state_store=InMemoryStateStore())
+
+        result = keeper.run_once()
+
+        self.assertTrue(result.healthy)
+        self.assertEqual(
+            cast.actions,
+            [
+                ("set_muted", True),
+                ("load", False),
+                ("set_muted", False),
+            ],
+        )
+        self.assertEqual(keeper.state.last_cast_state["player_state"], PLAYER_PAUSED)
+
     def test_run_once_loads_media_paused_when_no_state_exists(self):
         cast = FakeCast(
             cast_state(
