@@ -2,7 +2,7 @@ import unittest
 
 import datetime
 
-from white_noise_keeper.cast import CastState, PLAYER_PAUSED, PLAYER_PLAYING
+from white_noise_keeper.cast import CastState, PLAYER_IDLE, PLAYER_PAUSED, PLAYER_PLAYING
 from white_noise_keeper.config import AppConfig, CastConfig, HttpConfig, MonitorConfig
 from white_noise_keeper.keeper import (
     WhiteNoiseKeeper,
@@ -347,6 +347,44 @@ class KeeperTest(unittest.TestCase):
 
         self.assertEqual(status["last_cast_state"]["content_id"], EXPECTED_URL)
         self.assertEqual(status["last_cast_state"]["player_state"], PLAYER_PAUSED)
+
+    def test_status_snapshot_includes_current_cast_state_without_publishing_it(self):
+        cast = FakeCast(
+            cast_state(
+                content_id=EXPECTED_URL,
+                player_state=PLAYER_IDLE,
+                volume_muted=False,
+            )
+        )
+        keeper = build_keeper(
+            cast=cast,
+            state_store=InMemoryStateStore(
+                RuntimeState(
+                    last_cast_state=snapshot(
+                        content_id=EXPECTED_URL,
+                        player_state=PLAYER_PLAYING,
+                        volume_muted=True,
+                    )
+                )
+            ),
+        )
+
+        status = keeper.status_snapshot()
+
+        self.assertEqual(status["last_cast_state"]["player_state"], PLAYER_PLAYING)
+        self.assertEqual(status["current_player_state"], PLAYER_IDLE)
+        self.assertEqual(status["current_cast_state"], snapshot_from_cast_state(cast.state))
+        self.assertEqual(keeper.state.last_cast_state["player_state"], PLAYER_PLAYING)
+
+    def test_status_snapshot_reports_current_state_read_error(self):
+        keeper = build_keeper(cast=FakeCast(fail_get_state_times=1))
+
+        status = keeper.status_snapshot()
+
+        self.assertTrue(status["ok"])
+        self.assertIsNone(status["current_player_state"])
+        self.assertIsNone(status["current_cast_state"])
+        self.assertEqual(status["current_state_error"], "cast unavailable")
 
     def test_run_once_restores_last_media_snapshot_when_cast_reports_idle(self):
         cast = FakeCast(

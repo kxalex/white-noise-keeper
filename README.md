@@ -108,6 +108,10 @@ Status:
 curl http://<pi-ip>:8765/v1/status
 ```
 
+The status response includes `last_cast_state` from the last published keeper
+state plus a live `current_cast_state` and `current_player_state` read from the
+Nest for debugging.
+
 Start white noise once:
 
 ```sh

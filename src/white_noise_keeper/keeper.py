@@ -162,11 +162,29 @@ class WhiteNoiseKeeper:
         return self._run_command("stop", self.playback.pause_at_beginning)
 
     def status_snapshot(self) -> dict:
-        return {
-            "ok": True,
-            "last_command": _copy_optional_dict(self._published_state.last_command),
-            "last_cast_state": _copy_optional_dict(self._published_state.last_cast_state),
-        }
+        with self._lock:
+            payload = {
+                "ok": True,
+                "last_command": _copy_optional_dict(self._published_state.last_command),
+                "last_cast_state": _copy_optional_dict(
+                    self._published_state.last_cast_state
+                ),
+                "current_player_state": None,
+                "current_cast_state": None,
+            }
+            try:
+                current = self.cast.get_state()
+            except Exception as exc:
+                LOG.warning(
+                    "Could not read current Cast state for status endpoint: %s",
+                    exc,
+                )
+                payload["current_state_error"] = str(exc)
+                return payload
+
+            payload["current_cast_state"] = self._snapshot(current)
+            payload["current_player_state"] = current.player_state
+            return payload
 
     def stats_snapshot(self) -> dict:
         with self._lock:
